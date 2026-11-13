@@ -92,14 +92,6 @@ export async function POST(
     },
   });
 
-  // If status was OPEN, transition to IN_PROGRESS
-  if (query.status === QueryStatus.OPEN) {
-    await prisma.query.update({
-      where: { id: queryId },
-      data: { status: QueryStatus.IN_PROGRESS },
-    });
-  }
-
   // Notify counterpart user
   const recipientUserIds: string[] = [];
   if (auth.user.role === Role.STUDENT) {
