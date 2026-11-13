@@ -1,9 +1,50 @@
 {
-  "name": "ia-portal-monorepo",
+  "name": "ia-portal",
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "test": "npm --prefix backend test",
-    "build": "npm --prefix backend build"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "bcrypt": "^5.1.1",
+    "clsx": "^2.1.1",
+    "exceljs": "^4.4.0",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.454.0",
+    "next": "^14.2.15",
+    "papaparse": "^5.4.1",
+    "pdfkit": "^0.15.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.13.3",
+    "resend": "^4.0.1",
+    "tailwind-merge": "^2.5.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.9.0",
+    "@types/papaparse": "^5.3.15",
+    "@types/pdfkit": "^0.13.5",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/supertest": "^7.2.1",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "prisma": "^5.22.0",
+    "supertest": "^7.2.2",
+    "tailwindcss": "^3.4.14",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.5"
   }
 }
