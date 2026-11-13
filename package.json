@@ -1,6 +1,7 @@
 {
   "name": "ia-portal",
   "version": "1.0.0",
+  "description": "Internal Assessment Portal - Consolidated Next.js 14 Full-Stack Monorepo",
   "private": true,
   "scripts": {
     "dev": "next dev",
