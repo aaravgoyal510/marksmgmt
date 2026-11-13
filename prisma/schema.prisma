@@ -1,0 +1,309 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  STUDENT
+  FACULTY
+  ADMIN
+}
+
+enum ScoreGroup {
+  CES
+  INTERNAL
+}
+
+enum QueryStatus {
+  OPEN
+  ESCALATED
+  RESOLVED
+}
+
+model User {
+  id            String          @id @default(uuid())
+  username      String          @unique
+  passwordHash  String
+  role          Role
+  email         String?
+  phone         String?
+  profilePicUrl String?
+  createdAt     DateTime        @default(now())
+  
+  studentProfile StudentProfile?
+  facultyProfile FacultyProfile?
+  notifications  Notification[]
+  auditLogs      AuditLog[]      @relation("UserAuditLogs")
+  queryMessages  QueryMessage[]
+}
+
+model StudentProfile {
+  id               String   @id @default(uuid())
+  userId           String   @unique
+  name             String
+  erpNo            String   @unique
+  prn              String   @unique
+  batchId          String
+  sectionId        String
+  semesterOverride Int?
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  batch             Batch              @relation(fields: [batchId], references: [id])
+  section           Section            @relation(fields: [sectionId], references: [id])
+  marks             Mark[]
+  attendanceRecords AttendanceRecord[]
+  queries           Query[]
+
+  @@index([batchId, sectionId])
+}
+
+model FacultyProfile {
+  id               String  @id @default(uuid())
+  userId           String  @unique
+  name             String
+  employeeId       String  @unique
+  homeDepartmentId String?
+
+  user                    User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  homeDepartment          Department?              @relation("FacultyHomeDept", fields: [homeDepartmentId], references: [id])
+  hodAssignments          HODAssignment[]
+  subjectOfferingSections SubjectOfferingSection[]
+  marksUpdated            Mark[]
+  queriesFaculty          Query[]                  @relation("FacultyQueries")
+  queriesHOD              Query[]                  @relation("HODQueries")
+  policiesConfirmed       GradingPolicy[]
+}
+
+model HODAssignment {
+  id           String @id @default(uuid())
+  facultyId    String
+  departmentId String @unique
+
+  faculty    FacultyProfile @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  department Department     @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+}
+
+model Department {
+  id             String @id @default(uuid())
+  name           String
+  totalSemesters Int
+
+  homeFaculty   FacultyProfile[] @relation("FacultyHomeDept")
+  hodAssignment HODAssignment?
+  batches       Batch[]
+  subjects      Subject[]
+  academicTerms AcademicTerm[]
+}
+
+model Batch {
+  id              String @id @default(uuid())
+  departmentId    String
+  label           String
+  startYear       Int
+  currentSemester Int
+
+  department Department       @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  sections   Section[]
+  students   StudentProfile[]
+}
+
+model Section {
+  id      String @id @default(uuid())
+  batchId String
+  name    String
+
+  batch                   Batch                    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  students                StudentProfile[]
+  subjectOfferingSections SubjectOfferingSection[]
+}
+
+model Subject {
+  id             String @id @default(uuid())
+  departmentId   String
+  name           String
+  code           String
+  semesterNumber Int
+
+  department       Department        @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  subjectOfferings SubjectOffering[]
+
+  @@unique([departmentId, code])
+}
+
+model AcademicTerm {
+  id             String   @id @default(uuid())
+  departmentId   String
+  semesterNumber Int
+  label          String
+  createdAt      DateTime @default(now())
+
+  department       Department        @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  subjectOfferings SubjectOffering[]
+
+  @@unique([departmentId, semesterNumber, label])
+}
+
+model SubjectOffering {
+  id             String @id @default(uuid())
+  subjectId      String
+  academicTermId String
+
+  subject       Subject                  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  academicTerm  AcademicTerm             @relation(fields: [academicTermId], references: [id], onDelete: Cascade)
+  gradingPolicy GradingPolicy?
+  sections      SubjectOfferingSection[]
+
+  @@unique([subjectId, academicTermId])
+}
+
+model GradingPolicy {
+  id                   String    @id @default(uuid())
+  subjectOfferingId    String    @unique
+  cesGroupWeightage    Float
+  internalWeightage    Float
+  attendanceWeightage  Float
+  confirmedAt          DateTime?
+  confirmedByFacultyId String?
+
+  subjectOffering      SubjectOffering       @relation(fields: [subjectOfferingId], references: [id], onDelete: Cascade)
+  confirmedByFaculty   FacultyProfile?       @relation(fields: [confirmedByFacultyId], references: [id])
+  scoreComponents      ScoreComponent[]
+  attendanceSlabRanges AttendanceSlabRange[]
+}
+
+model ScoreComponent {
+  id              String     @id @default(uuid())
+  gradingPolicyId String
+  group           ScoreGroup
+  name            String
+  maxMarks        Float
+  order           Int
+
+  gradingPolicy GradingPolicy @relation(fields: [gradingPolicyId], references: [id], onDelete: Cascade)
+  marks         Mark[]
+  queries       Query[]
+}
+
+model AttendanceSlabRange {
+  id              String @id @default(uuid())
+  gradingPolicyId String
+  minPercent      Float
+  maxPercent      Float
+  marks           Float
+
+  gradingPolicy GradingPolicy @relation(fields: [gradingPolicyId], references: [id], onDelete: Cascade)
+}
+
+model SubjectOfferingSection {
+  id                String  @id @default(uuid())
+  subjectOfferingId String
+  sectionId         String
+  facultyId         String?
+
+  subjectOffering   SubjectOffering    @relation(fields: [subjectOfferingId], references: [id], onDelete: Cascade)
+  section           Section            @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  faculty           FacultyProfile?    @relation(fields: [facultyId], references: [id])
+  attendanceRecords AttendanceRecord[]
+  queries           Query[]
+
+  @@unique([subjectOfferingId, sectionId])
+  @@index([facultyId])
+}
+
+model Mark {
+  id                 String   @id @default(uuid())
+  scoreComponentId   String
+  studentId          String
+  marksObtained      Float
+  updatedAt          DateTime @updatedAt
+  updatedByFacultyId String
+
+  scoreComponent   ScoreComponent @relation(fields: [scoreComponentId], references: [id], onDelete: Cascade)
+  student          StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  updatedByFaculty FacultyProfile @relation(fields: [updatedByFacultyId], references: [id])
+
+  @@unique([scoreComponentId, studentId])
+  @@index([studentId])
+  @@index([scoreComponentId])
+}
+
+model AttendanceRecord {
+  id                       String   @id @default(uuid())
+  subjectOfferingSectionId String
+  studentId                String
+  attendancePercent        Float
+  updatedAt                DateTime @updatedAt
+
+  subjectOfferingSection SubjectOfferingSection @relation(fields: [subjectOfferingSectionId], references: [id], onDelete: Cascade)
+  student                StudentProfile         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([subjectOfferingSectionId, studentId])
+  @@index([studentId])
+  @@index([subjectOfferingSectionId])
+}
+
+model Query {
+  id                       String      @id @default(uuid())
+  studentId                String
+  subjectOfferingSectionId String
+  scoreComponentId         String?
+  message                  String
+  status                   QueryStatus @default(OPEN)
+  facultyId                String
+  hodId                    String?
+  createdAt                DateTime    @default(now())
+  resolvedAt               DateTime?
+
+  student                StudentProfile         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subjectOfferingSection SubjectOfferingSection @relation(fields: [subjectOfferingSectionId], references: [id], onDelete: Cascade)
+  scoreComponent         ScoreComponent?        @relation(fields: [scoreComponentId], references: [id])
+  faculty                FacultyProfile         @relation("FacultyQueries", fields: [facultyId], references: [id])
+  hod                    FacultyProfile?        @relation("HODQueries", fields: [hodId], references: [id])
+  messages               QueryMessage[]
+
+  @@index([status])
+  @@index([facultyId])
+  @@index([hodId])
+}
+
+model QueryMessage {
+  id           String   @id @default(uuid())
+  queryId      String
+  authorUserId String
+  message      String
+  createdAt    DateTime @default(now())
+
+  query      Query @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  authorUser User  @relation(fields: [authorUserId], references: [id])
+}
+
+model AuditLog {
+  id              String   @id @default(uuid())
+  entityType      String
+  entityId        String
+  changedByUserId String
+  oldValue        String
+  newValue        String
+  changedAt       DateTime @default(now())
+
+  changedByUser User @relation("UserAuditLogs", fields: [changedByUserId], references: [id])
+
+  @@index([entityType, entityId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  message   String
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
