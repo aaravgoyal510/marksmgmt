@@ -36,3 +36,26 @@ Thumbs.db
 .cache
 tmp/
 scratch/
+
+# Tests & Test Suites (excluded per repository rules)
+tests/
+**/tests/
+__tests__/
+*.test.*
+*.spec.*
+coverage/
+
+# Agent configuration, tools, and skills
+.agent/
+.agents/
+.gemini/
+.gsd/
+adapters/
+scripts/
+docs/
+GSD-STYLE.md
+PROJECT_RULES.md
+model_capabilities.yaml
+
+# Plugins
+plugins/
