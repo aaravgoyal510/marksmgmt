@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  experimental: {
+    serverComponentsExternalPackages: ['pdfkit', 'exceljs'],
+  },
   webpack: (config, { dev }) => {
     if (dev) {
       config.watchOptions = {
@@ -13,3 +16,4 @@ const nextConfig = {
 };
 
 export default nextConfig;
+
