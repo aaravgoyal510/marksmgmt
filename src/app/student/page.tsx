@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchApi } from "@/lib/api";
+import { fetchApi, getApiUrl } from "@/lib/api";
 import HeaderNav from "@/components/HeaderNav";
 import { BookOpen, AlertCircle, Download } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
@@ -130,7 +130,7 @@ export default function StudentSemesterView() {
 
                     {sub.offeringId && (
                       <a
-                        href={`http://localhost:5000/api/reports/students/${data.student.id}/subject-offerings/${sub.offeringId}/pdf`}
+                        href={getApiUrl(`/reports/students/${data.student.id}/subject-offerings/${sub.offeringId}/pdf`)}
                         target="_blank"
                         rel="noreferrer"
                         className="px-3 py-1.5 bg-[#3730A3] text-white rounded-lg text-xs font-semibold hover:bg-[#4338CA] transition-colors flex items-center gap-1.5"
