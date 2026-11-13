@@ -104,10 +104,10 @@ export async function POST(
     if (existingPolicyCheck && existingPolicyCheck.confirmedAt !== null) {
       return NextResponse.json(
         {
-          error: "Cannot modify confirmed policy. Unconfirm first.",
-          code: "POLICY_LOCKED_CONFIRMED",
+          error: "Grading policy is confirmed and locked. You must unlock/un-confirm the policy before modifying it.",
+          code: "POLICY_LOCKED",
         },
-        { status: 423 }
+        { status: 400 }
       );
     }
 
