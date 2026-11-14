@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AuthService } from "@/services/authService";
+import { AuthService, MAX_FAILED_LOGIN_ATTEMPTS } from "@/services/authService";
 import { setAuthCookies } from "@/lib/auth/guards";
 
 export async function POST(req: NextRequest) {
@@ -18,10 +18,19 @@ export async function POST(req: NextRequest) {
     if (result.status === "LOCKED") {
       return NextResponse.json(
         {
-          error: "Account locked after 5 failed attempts",
+          error: `Account locked after ${MAX_FAILED_LOGIN_ATTEMPTS} failed attempts`,
           options: result.lockoutOptions,
         },
         { status: 423 }
+      );
+    }
+
+    if (result.status === "DEACTIVATED") {
+      return NextResponse.json(
+        {
+          error: "Invalid username or password",
+        },
+        { status: 401 }
       );
     }
 

@@ -8,12 +8,22 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  return markRead(req, params.id);
+}
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  return markRead(req, params.id);
+}
+
+async function markRead(req: NextRequest, notificationId: string) {
   const auth = verifyAuth(req);
   if (!auth.ok) {
     return auth.error;
   }
 
-  const notificationId = params.id;
   const userId = auth.user.userId;
 
   const notification = await prisma.notification.findFirst({

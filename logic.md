@@ -161,7 +161,7 @@ erDiagram
    - Admin credential export available as Excel sheets (`.xlsx`).
 
 2. **Account Lockout**:
-   - 10 consecutive failed login attempts lock the account for 24 hours (`MAX_FAILED_LOGIN_ATTEMPTS = 10`).
+   - 5 consecutive failed login attempts lock the account for 24 hours (`MAX_FAILED_LOGIN_ATTEMPTS = 5`).
    - Login endpoint returns `HTTP 423 Locked` with options `['request-password-reset', 'wait-24h']`.
    - Admin/HOD can force-reset user passwords.
 
@@ -233,15 +233,15 @@ erDiagram
 
 9. **Faculty Assigned Sections Dropdown Fallback Bug (Fixed)**:
    - *Initial State*: `/faculty` was calling `GET /api/hod/subject-offerings?departmentId=dept-bca` (a hardcoded HOD endpoint) instead of fetching the logged-in faculty member's specific section assignments.
-   - *Fix Applied*: Added `GET /api/faculty/my-sections` in `marksController.ts` & `facultyRoutes.ts`. Updated `faculty/page.tsx` to call `/api/faculty/my-sections`, correctly displaying all section offerings assigned to that faculty member (`BCA101 - Section M`, `BCA101 - Section AFT`, etc.).
+   - *Fix Applied*: Added `GET /api/faculty/my-sections` in `src/app/api/faculty/my-sections/route.ts`. Updated `faculty/page.tsx` to call `/api/faculty/my-sections`, correctly displaying all section offerings assigned to that faculty member (`BCA101 - Section M`, `BCA101 - Section AFT`, etc.).
 
 10. **Attendance Slab Builder & Validation UI Gap (Fixed)**:
     - *Initial State*: The Policy Builder modal on `/hod` lacked a slab range table for editing `AttendanceSlabRange` rows (`minPercent` to `maxPercent` -> `marks`), omitting slab editing and coverage/overlap warnings.
-    - *Fix Applied*: Built Attendance Slab Ranges table in `frontend/src/app/hod/page.tsx` with `openPolicyModal` pre-filling existing slab records, add/remove row controls, and a live client-side validation engine checking for overlaps, gaps (0-100% coverage), and weightage overflows.
+    - *Fix Applied*: Built Attendance Slab Ranges table in `src/app/hod/page.tsx` with `openPolicyModal` pre-filling existing slab records, add/remove row controls, and a live client-side validation engine checking for overlaps, gaps (0-100% coverage), and weightage overflows.
 
 11. **Faculty Attendance CSV File Input Gap (Fixed)**:
     - *Initial State*: `/faculty` required manual text copy-pasting into a `<textarea>` to import attendance CSV snapshots.
-    - *Fix Applied*: Added a `<input type="file" accept=".csv">` file picker in `frontend/src/app/faculty/page.tsx` using browser `FileReader` to read CSV contents directly into the dry-run preview engine.
+    - *Fix Applied*: Added a `<input type="file" accept=".csv">` file picker in `src/app/faculty/page.tsx` using browser `FileReader` to read CSV contents directly into the dry-run preview engine.
 
 ---
 
@@ -253,17 +253,17 @@ erDiagram
 
 ### Layer 2: Server-Side Authorization & IDOR Boundaries
 - **Role Enforcement**:
-  - `PUT /api/marks/bulk` & `POST /api/sections/:id/attendance/commit`: Enforces `requireAuth([Role.FACULTY])` and `requireUnlockedSection` middleware.
-  - `GET /api/reports/subject-offerings/:id/export`: Enforces `requireAuth([Role.ADMIN, Role.FACULTY])` (denies `Role.STUDENT` with `HTTP 403`).
-  - HOD Routes (`/api/hod/*`): Enforces `requireAuth([Role.FACULTY])` and `requireHODOfDepartment`.
-  - Admin Routes (`/api/admin/*`): Enforces `requireAuth([Role.ADMIN])`.
+  - `PUT /api/marks/bulk` & `POST /api/sections/:id/attendance/commit`: Enforces `verifyAuth(req, [Role.FACULTY])` and `requireSectionNotLocked` guard.
+  - `GET /api/reports/subject-offerings/:id/export`: Enforces `verifyAuth(req, [Role.ADMIN, Role.FACULTY])` (denies `Role.STUDENT` with `HTTP 403`).
+  - HOD Routes (`/api/hod/*`): Enforces `verifyAuth(req, [Role.FACULTY])` and `verifyHOD`.
+  - Admin Routes (`/api/admin/*`): Enforces `verifyAuth(req, [Role.ADMIN])`.
 - **IDOR Safeguards**:
   - `GET /api/students/me/semester-view`: Reads `req.user.userId` from JWT payload; ignores client-supplied params.
   - `GET /api/reports/students/:studentId/subject-offerings/:offeringId/pdf`: Rejects requests where `req.user.role === Role.STUDENT` and `student.userId !== req.user.userId` (`code: IDOR_FORBIDDEN`).
   - Query Endpoints (`/api/queries/:id/messages`, `/api/queries/:id/escalate`, `/api/queries/:id/resolve`): Rejects requests from students attempting to post, escalate, or resolve queries belonging to other students (`code: IDOR_FORBIDDEN`).
 
 ### Layer 3: JWT Secret Hardening, Expiry & Production Fail-Safe
-- **Production Guard**: At server boot (`app.ts`), if `NODE_ENV === "production"` and `JWT_SECRET` is unset or equals default fallbacks, server logs a fatal security error and immediately terminates (`process.exit(1)`). Removed stray default fallback strings across codebase.
+- **Production Guard**: At server execution, if `NODE_ENV === "production"` and `JWT_SECRET` is unset or equals default fallbacks, server logs a fatal security error and immediately terminates (`process.exit(1)`). Removed stray default fallback strings across codebase.
 - **Password Reset Expiry**: Password reset tokens are signed JWTs generated via `forgotPasswordHandler` with an **exact 15-minute expiration (`expiresIn: "15m"`)**. Expired reset tokens are rejected by `POST /api/auth/reset-password`.
 - **Account Enumeration Safeguard**: `login` and `forgot-password` return generic non-enumerating messages (`"Invalid username or password"`, `"Password reset link sent to registered email if account exists."`).
 
@@ -272,14 +272,22 @@ erDiagram
 - **File Whitelisting**:
   - CSV Import (`attendanceController.ts`): Enforces 2MB size limit and header validation (`ERP`, `PRN`, `Attendance`); rejects invalid structures (`code: INVALID_CSV_STRUCTURE`).
   - Profile Pictures (`profileController.ts`): Validates Data URIs (`png`/`jpeg`/`webp`) or HTTPS image URLs (`.png`, `.jpg`, `.jpeg`, `.webp`); rejects executable URLs (`code: INVALID_IMAGE_TYPE`).
-- **Payload Limits**: Express app enforces a strict **2MB body size limit** (`express.json({ limit: "2mb" })`) in `app.ts`.
-- **Crawler Protection**: `frontend/public/robots.txt` disallows all web crawlers (`Disallow: /`).
+- **Payload Limits**: Next.js route handlers enforce strict **2MB body size limits** on JSON payloads and CSV uploads.
+- **Crawler Protection**: `public/robots.txt` disallows all web crawlers (`Disallow: /`).
 
-### Layer 5: CORS Configuration
-- **Allowed Origins**: Strictly configured in `app.ts` via `cors()` middleware with `FRONTEND_URL` and authorized origin list (`http://localhost:3000`, `http://localhost:3001`). Rejects unauthorized origins with CORS policy violation errors.
+### Layer 5: CSRF & Same-Site Cookie Protection
+- **Allowed Origins & Headers**: Strictly guarded via Double-Submit `X-Requested-With: XMLHttpRequest` header checks and `SameSite: strict` (production) / `lax` (development) HttpOnly cookie storage for JWT sessions.
 
 ### Layer 6: Rate Limiting & Audit Trail
-- **Auth Lockout**: 10 failed consecutive password attempts lock account for 24 hours (`MAX_FAILED_LOGIN_ATTEMPTS = 10` in `AuthService`).
-- **Endpoint Rate Limiting**: `generalRateLimiter` enforces 300 requests per 15-minute sliding window on `/api`; `authRateLimiter` enforces 25 login requests per 15 minutes (buffering up to 10 failed login retries).
+- **Auth Lockout**: 5 failed consecutive password attempts lock account for 24 hours (`MAX_FAILED_LOGIN_ATTEMPTS = 5` in `AuthService`).
+- **Endpoint Rate Limiting**: Edge middleware (`src/middleware.ts`) enforces per-IP sliding window rate limiting on `/api/auth/*` (30 requests/min per IP, returning `HTTP 429` with `Retry-After`).
 - **Expanded Audit Logging**: Security audit events (`AUTH_LOCKOUT`, `PASSWORD_CHANGED`, `FORCE_PASSWORD_RESET`) are logged to the `AuditLog` table.
-- **Admin Password Rotation**: In production (`NODE_ENV === "production"`), `seed.ts` reads `ADMIN_INITIAL_PASSWORD` or generates a random 16-character password via `crypto.randomBytes(12)`, outputting initial credentials to stdout ONCE.
+### Layer 7: v1.1 Operational Security Controls
+- **Marks Publication Isolation**: Marks and attendance are hidden from student semester view and PDF exports until explicitly published by teaching faculty (`marksPublishedAt`).
+- **Bulk Marks Upload**: Two-phase dry-run preview and commit (`.csv`, `.xlsx`), validating bounds against confirmed policy score components.
+- **Account Deactivation & Immediate Token Revocation**: Soft-deactivation (`isActive: false`, `deactivatedAt`) prevents login and refresh. `POST /api/auth/logout-everywhere` increments `tokenVersion`, invalidating outstanding refresh tokens while access tokens expire naturally within 15 minutes.
+- **Query SLA Cron & Escalation**: Nightly cron `/api/cron/query-sla` protected with constant-time `CRON_SECRET` bearer check sends 48h reminders and automatically escalates unanswered queries at 96h to HODs.
+- **Faculty Reassignment Continuity**: Reassigning a section migrates all `OPEN` student queries to the new faculty member automatically with audit logging.
+- **Attendance Shortfall & Early Warning**: Student dashboard alerts students below the HOD policy shortfall percent (`attendanceShortfallPercent`) with an integrated What-If simulator.
+- **Multi-Term Transcript PDF**: `/api/students/[id]/transcript/pdf` allows staff to generate a consolidated academic record omitting unpublished terms.
+

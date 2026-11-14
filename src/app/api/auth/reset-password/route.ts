@@ -34,13 +34,19 @@ export async function POST(req: NextRequest) {
     }
 
     const newHash = await hashPassword(newPassword);
-    await prisma.user.update({
+    const updatedUser = await prisma.user.update({
       where: { id: decoded.userId },
       data: { passwordHash: newHash },
     });
 
+    // Clear any active lockout state for this user
+    if (updatedUser?.username) {
+      const { AuthService } = await import("@/services/authService");
+      AuthService.clearLockout(updatedUser.username);
+    }
+
     return NextResponse.json({
-      message: "Password reset successfully using 15-minute token",
+      message: "Password reset successfully. You can now sign in with your new password.",
     });
   } catch (error: any) {
     return NextResponse.json(

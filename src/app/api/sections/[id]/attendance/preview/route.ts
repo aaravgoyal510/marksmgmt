@@ -228,6 +228,21 @@ export async function POST(
 
     const hasSlabGaps = blockedCount > 0;
 
+    if (hasSlabGaps && auth.user.userId) {
+      try {
+        await prisma.notification.create({
+          data: {
+            userId: auth.user.userId,
+            type: "IMPORT_BLOCKED",
+            message: `Attendance import has ${blockedCount} blocked row(s) falling into slab gaps for Section ${offeringSection.section.name}`,
+            link: "/faculty",
+          },
+        });
+      } catch (notifErr) {
+        console.error("Failed to create IMPORT_BLOCKED notification:", notifErr);
+      }
+    }
+
     return NextResponse.json(
       {
         sectionId,

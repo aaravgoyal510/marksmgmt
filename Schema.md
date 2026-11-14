@@ -41,6 +41,13 @@ Notification (per user)
 | email | String | nullable, required for self-service reset |
 | phone | String | nullable |
 | profilePicUrl | String | nullable, Supabase Storage |
+| failedLoginAttempts | Int | default 0, tracks consecutive failed login attempts |
+| lockedUntil | DateTime | nullable, set to now() + 24h when failedLoginAttempts >= 5 |
+| isActive | Boolean | default true, soft-deactivation flag |
+| deactivatedAt | DateTime | nullable, timestamp of deactivation |
+| tokenVersion | Int | default 0, incremented on logout-everywhere to revoke refresh tokens |
+| emailNotifications | Boolean | default true, opt-in/out preference for automated email alerts |
+| lastLoginAt | DateTime | nullable, timestamp of most recent successful password authentication |
 | createdAt | DateTime | |
 
 ### StudentProfile
@@ -130,6 +137,7 @@ Notification (per user)
 | cesGroupWeightage | Float | target combined weightage for all CES components, e.g. 10 |
 | internalWeightage | Float | target weightage for internal exam, e.g. 20 |
 | attendanceWeightage | Float | max marks attendance contributes, e.g. 10 |
+| attendanceShortfallPercent | Int | nullable, default 75 — student warning threshold |
 | confirmedAt | DateTime | nullable — null = not yet confirmed, section stays locked |
 | confirmedByFacultyId | UUID (FK → FacultyProfile) | the HOD who confirmed it |
 
@@ -163,6 +171,8 @@ A % that falls in a gap between ranges is **not covered** — import blocks that
 | subjectOfferingId | UUID (FK → SubjectOffering) | |
 | sectionId | UUID (FK → Section) | |
 | facultyId | UUID (FK → FacultyProfile) | nullable — null = unassigned, locked |
+| marksPublishedAt | DateTime | nullable — timestamp when teaching faculty released marks to students |
+| marksPublishedById | UUID (FK → User) | nullable — user ID who executed the marks publish action |
 | unique constraint | (subjectOfferingId, sectionId) | |
 
 **Locking rule**: marks entry and attendance import for a SubjectOfferingSection require `facultyId IS NOT NULL` **and** its parent GradingPolicy's `confirmedAt IS NOT NULL`.

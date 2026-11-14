@@ -50,11 +50,13 @@ DATABASE_URL│ Port 6543 (Transaction Pooler)           DIRECT_URL│ Port 5432
 ### Core Architecture Components
 - **Framework**: Next.js 14.2 (App Router, Node.js 20+ runtime).
 - **Frontend**: React 18, Tailwind CSS, Lucide React icons, Recharts for analytics.
-- **Backend API**: 47 Next.js Serverless Route Handlers in `src/app/api/**`.
+- **Backend API**: 50+ Next.js Serverless Route Handlers in `src/app/api/**` and Edge Security Middleware in `src/middleware.ts`.
 - **Database & ORM**: PostgreSQL with Prisma ORM (`@prisma/client` and `prisma` CLI).
 - **Connection Management**: Supabase Supavisor transaction pooler for runtime queries, direct session connection for DDL migrations.
 - **Document Generation**: PDFKit (serverless runtime with `export const runtime = "nodejs"`) for student report cards and ExcelJS for class mark sheets.
-- **Authentication**: Stateless HTTP-only JWT cookies (15-minute access token, 7-day refresh token) with role-based route guards (`STUDENT`, `FACULTY`, `ADMIN`).
+- **Authentication & Session Controls**: Stateless HTTP-only JWT cookies (15-minute access token, 7-day refresh token) with role-based route guards (`STUDENT`, `FACULTY`, `ADMIN`).
+- **Session Lifecycle & Global Revocation (`/api/auth/logout-everywhere`)**: Access tokens are signed JWTs with a strict 15-minute validity window, enabling zero-database-lookup synchronous route verification. Refresh tokens embed `tokenVersion` and strictly validate `isActive` and `tokenVersion` against PostgreSQL on each refresh (`/api/auth/refresh`). Invoking `POST /api/auth/logout-everywhere` increments `tokenVersion` in PostgreSQL, immediately invalidating all outstanding refresh tokens across all devices. Outstanding 15-minute access tokens expire naturally within a maximum of 15 minutes, guaranteeing total session termination across all devices.
+- **Production Telemetry**: Sentry Next.js integration (`@sentry/nextjs`) initialized via `withSentryConfig` in `next.config.mjs` and Next.js `instrumentation.ts`. When `SENTRY_DSN` is unset, Sentry gracefully stays inert without blocking application runtime or build steps.
 
 ---
 
@@ -126,18 +128,31 @@ ADMIN_INITIAL_PASSWORD="<strong-temporary-admin-password>"
 Select **Production**, **Preview**, and **Development** targets as appropriate.
 
 ### Step 5: Run Production Database Migrations
-Before or immediately after the initial deployment, apply database migrations against Supabase using your direct connection string:
+
+Depending on the state of your target database, execute one of the two paths below using your direct connection string (`DIRECT_URL`):
+
+#### Path A: Fresh Database (Brand New Production Setup)
+For a newly provisioned PostgreSQL instance:
 ```bash
-# In your local terminal with DIRECT_URL configured in .env:
-npm run prisma:deploy
+# 1. Apply all versioned migrations (including baseline 20261101000000_init)
+npx prisma migrate deploy
+
+# 2. Seed the initial Administrator account
+npm run seed:prod
 ```
-Or run the seed script to create initial departments, batches, and administrator credentials:
+
+#### Path B: Existing Development Database (Initialized via db push)
+If your database schema was already pushed during earlier prototyping without migration tracking:
 ```bash
-npm run seed
+# 1. Mark the baseline migration as already applied without executing DDL:
+npx prisma migrate resolve --applied 20261101000000_init
+
+# 2. Apply all subsequent incremental migrations cleanly (all use IF NOT EXISTS):
+npx prisma migrate deploy
 ```
 
 ### Step 6: Deploy & Verify
-1. Click **Deploy**. Vercel will install dependencies, run `prisma generate`, and compile all 47 serverless route handlers and pages.
+1. Click **Deploy**. Vercel will install dependencies, run `prisma generate`, and compile all 50+ serverless route handlers, edge middleware, and pages.
 2. Once deployment completes, navigate to your production URL:
    - Verify health check: `https://<your-project>.vercel.app/api/health` returns `{"status":"ok", "timestamp":"..."}`.
    - Navigate to the login screen and log in with your seeded administrator credentials.
@@ -301,3 +316,102 @@ server {
 - **Symptom**: Calling `/api/health` repeatedly returns an identical, outdated timestamp.
 - **Cause**: Next.js statically optimized the route handler during `next build`.
 - **Resolution**: Verify [src/app/api/health/route.ts](file:///C:/Users/admin/Desktop/internal%20marks%20calculated/src/app/api/health/route.ts) includes `export const dynamic = "force-dynamic";`.
+
+---
+
+## 8. Operational Runbooks
+
+### Runbook 1: First-Time Production Setup & Database Initialization
+1. **Provision Database**: Set up a PostgreSQL 15+ database on Supabase or AWS RDS.
+2. **Configure Connection Strings**:
+   - `DATABASE_URL`: Transaction pooler (Port 6543) with `?pgbouncer=true&connection_limit=1`.
+   - `DIRECT_URL`: Direct connection (Port 5432) for DDL migrations.
+3. **Apply Migrations**:
+   ```bash
+   npm run prisma:deploy
+   ```
+4. **Initialize Baseline Data**:
+   Ensure `ALLOW_DEMO_SEED=true` is set only for staging/dev environments. For production:
+   ```bash
+   ALLOW_DEMO_SEED=true ADMIN_INITIAL_PASSWORD="<YourSecurePassword>" npm run seed
+   ```
+5. **Verify Health Endpoint**: Query `GET /api/health` and verify `200 OK` with database status `healthy`.
+
+---
+
+### Runbook 2: Batch Promotion & Dry-Run Preview
+1. **Navigate to Promotion Modal**: Admin (`/admin`) or Department HOD (`/hod`).
+2. **Execute Dry-Run Preview**:
+   - Invokes `GET /api/admin/batches/[id]/promote/preview` (or `/api/hod/...`).
+   - Verifies target semester, academic term creation/reuse, section provisioning, and flags any students with `semesterOverride`.
+   - **Zero Writes**: Confirm that the dry-run executes purely in-memory without database alterations.
+3. **Execute Promotion**:
+   - In the confirmation modal, type the exact batch label (e.g., `BCA 2024-27`).
+   - Click "Confirm Promotion". The system increments `currentSemester` and provisions all offering sections for the new semester.
+
+---
+
+### Runbook 3: Marks Lock & Policy Enforcement (HTTP 423)
+1. **423 Locked State**: Marks entry, Excel imports, and attendance submissions are locked with HTTP 423 until:
+   - Grading Policy is confirmed by the HOD.
+   - Section has an assigned teaching faculty member.
+2. **Unlocking Sections**:
+   - HOD accesses `/hod`, configures component weights (CES, Internal, Attendance) and attendance slabs, and clicks **"Confirm Policy"**.
+   - HOD assigns teaching faculty member to each section of that offering.
+3. **Emergency Relocking**:
+   - If an error is detected in policy weights, the HOD clicks **"Unconfirm Policy"**. This immediately re-locks all sections and emits a `POLICY_UNCONFIRMED` notification to assigned faculty.
+
+---
+
+### Runbook 4: Emergency Session Revocation & Account Deactivation
+1. **User Account Deactivation**:
+   - Admin accesses `/admin` -> Faculty / Student table -> Clicks **"Deactivate"**.
+   - Increments `tokenVersion`, sets `isActive: false`, and writes an `AuditLog`.
+   - Blocks deactivation if faculty is a sitting HOD (`FACULTY_IS_HOD`) or assigned to active sections (`FACULTY_HAS_ACTIVE_SECTIONS`).
+2. **Global Logout Everywhere**:
+   - Triggered via `POST /api/auth/logout-everywhere`.
+   - Increments `tokenVersion` on `User`, revoking all active refresh tokens immediately.
+   - Any attempt to invoke `/api/auth/refresh` with an older token is rejected with 401.
+   - Existing 15-minute access tokens expire naturally within a maximum of 15 minutes.
+
+---
+
+### Runbook 5: Production Rollback Procedure
+1. **Application Code Rollback**:
+   - In Vercel Dashboard -> Deployments -> Find previous stable deployment -> Click **"Instant Rollback"**.
+2. **Database Migration Reversal**:
+   - Identify the failed migration SQL file in `prisma/migrations/`.
+   - Apply the corresponding reverse DDL script directly via `DIRECT_URL` (Port 5432).
+   - Update `_prisma_migrations` table to mark the migration rolled back.
+
+---
+
+## 9. Operational Checklists
+
+### Checklist A: Pre-Launch Production Verification
+- [ ] Environment variables verified: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `CRON_SECRET`.
+- [ ] Database migrations applied sequentially via `npm run prisma:deploy`.
+- [ ] Base admin user created with strong initial password.
+- [ ] Sentry error telemetry initialized (`withSentryConfig` in `next.config.mjs`, `instrumentation.ts` registered).
+- [ ] Vercel Cron registered for `/api/cron/query-sla` (`0 0 * * *`).
+- [ ] SSL certificate active with `X-Forwarded-Proto: https` enabled.
+- [ ] Full automated test suite passes (`npm test`).
+- [ ] Production build succeeds without errors (`npm run build`).
+
+### Checklist B: Term Start Operational Checklist
+- [ ] Create upcoming `AcademicTerm` records for all departments.
+- [ ] Review master subject catalogs and create any newly introduced courses.
+- [ ] Department HODs configure and confirm grading policies for all active subject offerings.
+- [ ] Department HODs assign teaching faculty members to all section offerings.
+- [ ] Verify that section HTTP 423 locks transition to unlocked state for assigned faculty.
+- [ ] Verify student rosters imported and assigned to sections.
+
+### Checklist C: Term End & Grade Finalization Checklist
+- [ ] Teaching faculty submit final marks via bulk grid or CSV/Excel import.
+- [ ] Teaching faculty review section analytics (mean, median, pass rate, grade bands, shortfall count).
+- [ ] Teaching faculty click "Publish Marks" to unlock student portal visibility.
+- [ ] Resolve all open student grievance queries before grade freeze deadline.
+- [ ] Confirm Query SLA cron runs without escalations.
+- [ ] Admin / HOD generates multi-term cumulative transcript PDFs with `OFFICIAL` watermark (students may download self-only cumulative transcript PDF).
+- [ ] Execute batch promotion dry-run previews and promote batches to next academic semester.
+

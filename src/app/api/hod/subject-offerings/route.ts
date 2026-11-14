@@ -44,6 +44,9 @@ export async function GET(req: NextRequest) {
           select: {
             id: true,
             confirmedAt: true,
+            scoreComponents: {
+              select: { id: true },
+            },
           },
         },
         sections: {
@@ -51,9 +54,25 @@ export async function GET(req: NextRequest) {
             section: {
               include: {
                 batch: true,
+                students: {
+                  select: {
+                    id: true,
+                    semesterOverride: true,
+                    batch: {
+                      select: {
+                        currentSemester: true,
+                      },
+                    },
+                  },
+                },
               },
             },
             faculty: true,
+            attendanceRecords: {
+              select: {
+                id: true,
+              },
+            },
           },
         },
       },
@@ -64,8 +83,52 @@ export async function GET(req: NextRequest) {
       },
     });
 
+    // Gather all component IDs to batch-query marks entered
+    const allComponentIds: string[] = [];
+    for (const offering of offerings) {
+      if (offering.gradingPolicy?.scoreComponents) {
+        for (const comp of offering.gradingPolicy.scoreComponents) {
+          allComponentIds.push(comp.id);
+        }
+      }
+    }
+
+    const marksWithStudents =
+      allComponentIds.length > 0
+        ? await prisma.mark.findMany({
+            where: {
+              scoreComponentId: { in: allComponentIds },
+            },
+            select: {
+              studentId: true,
+              scoreComponentId: true,
+            },
+          })
+        : [];
+
+    const marksByComponent = new Map<string, Set<string>>();
+    for (const m of marksWithStudents) {
+      if (!marksByComponent.has(m.scoreComponentId)) {
+        marksByComponent.set(m.scoreComponentId, new Set());
+      }
+      marksByComponent.get(m.scoreComponentId)!.add(m.studentId);
+    }
+
     const statusBoard = offerings.map((offering: any) => {
       const isPolicyConfirmed = Boolean(offering.gradingPolicy?.confirmedAt);
+      const offeringSem = offering.subject?.semesterNumber;
+      const offeringCompIds: string[] =
+        offering.gradingPolicy?.scoreComponents?.map((c: any) => c.id) || [];
+
+      const studentsWithMarksForOffering = new Set<string>();
+      for (const compId of offeringCompIds) {
+        const studentSet = marksByComponent.get(compId);
+        if (studentSet) {
+          studentSet.forEach((sId) => {
+            studentsWithMarksForOffering.add(sId);
+          });
+        }
+      }
 
       const sectionsWithStatus = offering.sections.map((offSection: any) => {
         let status: "UNASSIGNED" | "POLICY_PENDING" | "ACTIVE" = "ACTIVE";
@@ -76,20 +139,50 @@ export async function GET(req: NextRequest) {
           status = "POLICY_PENDING";
         }
 
-        const sectionLabel = offSection.section.batch?.label
+        const sectionLabel = offSection.section?.batch?.label
           ? `${offSection.section.name} (Batch ${offSection.section.batch.label})`
-          : offSection.section.name;
+          : offSection.section?.name || "Section";
+
+        const allStudents = offSection.section?.students || [];
+        const enrolledStudents = allStudents.filter((s: any) => {
+          const effectiveSem =
+            s.semesterOverride !== null && s.semesterOverride !== undefined
+              ? s.semesterOverride
+              : s.batch?.currentSemester;
+          if (effectiveSem !== undefined && offeringSem !== undefined) {
+            return effectiveSem === offeringSem;
+          }
+          return true;
+        });
+
+        const totalStudents = enrolledStudents.length;
+        let marksEnteredStudents = 0;
+        for (const st of enrolledStudents) {
+          if (studentsWithMarksForOffering.has(st.id)) {
+            marksEnteredStudents++;
+          }
+        }
+
+        const attendanceUploaded = Boolean(
+          offSection.attendanceRecords && offSection.attendanceRecords.length > 0
+        );
+        const isPublished = Boolean(offSection.marksPublishedAt);
 
         return {
           id: offSection.id,
           sectionId: offSection.sectionId,
           sectionName: sectionLabel,
-          rawSectionName: offSection.section.name,
-          batchLabel: offSection.section.batch?.label || null,
+          rawSectionName: offSection.section?.name,
+          batchLabel: offSection.section?.batch?.label || null,
           facultyId: offSection.facultyId,
           facultyName: offSection.faculty?.name ?? null,
           status,
           isLocked: !offSection.facultyId || !isPolicyConfirmed,
+          totalStudents,
+          marksEnteredStudents,
+          attendanceUploaded,
+          isPublished,
+          marksPublishedAt: offSection.marksPublishedAt || null,
         };
       });
 

@@ -44,6 +44,8 @@ export async function GET(req: NextRequest) {
       email: user.email,
       phone: user.phone,
       profilePicUrl: user.profilePicUrl,
+      emailNotifications: user.emailNotifications,
+      lastLoginAt: user.lastLoginAt,
       displayName,
       studentProfile: user.studentProfile,
       facultyProfile: user.facultyProfile,
@@ -65,7 +67,7 @@ export async function PUT(req: NextRequest) {
 
     const userId = auth.user.userId;
     const body = await req.json().catch(() => ({}));
-    const { name, email, phone, profilePicUrl } = body;
+    const { name, email, phone, profilePicUrl, emailNotifications } = body;
 
     if (profilePicUrl && typeof profilePicUrl === "string") {
       const isDataUri =
@@ -99,6 +101,7 @@ export async function PUT(req: NextRequest) {
         email: email !== undefined ? email : undefined,
         phone: phone !== undefined ? phone : undefined,
         profilePicUrl: profilePicUrl !== undefined ? profilePicUrl : undefined,
+        emailNotifications: typeof emailNotifications === "boolean" ? emailNotifications : undefined,
       },
     });
 

@@ -3,6 +3,7 @@ import { QueryStatus, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { verifyAuth } from "@/lib/auth/guards";
 import { sanitizeTextInput } from "@/utils/sanitizer";
+import { EmailService } from "@/services/emailService";
 
 export const dynamic = "force-dynamic";
 
@@ -42,21 +43,41 @@ export async function POST(
     );
   }
 
-  // IDOR Protection: Students can only escalate their own queries
-  if (auth.user.role === Role.STUDENT && query.student.userId !== userId) {
+  // Only (a) owning student or (b) assigned teaching faculty may escalate
+  let isAuthorized = false;
+
+  if (auth.user.role === Role.STUDENT) {
+    if (query.student.userId === userId) {
+      isAuthorized = true;
+    }
+  } else if (auth.user.role === Role.FACULTY) {
+    const callerFacultyId = auth.user.facultyId;
+    const assignedSectionFacultyId = query.subjectOfferingSection.facultyId;
+    if (
+      callerFacultyId &&
+      (callerFacultyId === query.facultyId || callerFacultyId === assignedSectionFacultyId)
+    ) {
+      isAuthorized = true;
+    }
+  }
+
+  if (!isAuthorized) {
     return NextResponse.json(
       {
-        error: "Forbidden: You are not authorized to escalate another student's query",
-        code: "IDOR_FORBIDDEN",
+        error: "Forbidden: Only the owning student or the assigned teaching faculty may escalate this query",
+        code: "ESCALATION_FORBIDDEN",
       },
       { status: 403 }
     );
   }
 
-  if (query.status === QueryStatus.ESCALATED) {
+  if (query.status === QueryStatus.ESCALATED || query.status === QueryStatus.RESOLVED) {
     return NextResponse.json(
-      { error: "Query is already escalated" },
-      { status: 400 }
+      {
+        error: `Query cannot be escalated because it is already ${query.status.toLowerCase()}`,
+        code: "INVALID_QUERY_STATE",
+      },
+      { status: 409 }
     );
   }
 
@@ -64,7 +85,7 @@ export async function POST(
 
   const hodAssignment = await prisma.hODAssignment.findUnique({
     where: { departmentId: deptId },
-    include: { faculty: true },
+    include: { faculty: { include: { user: true } } },
   });
 
   if (!hodAssignment) {
@@ -104,6 +125,26 @@ export async function POST(
       link: `/hod/queries/${query.id}`,
     },
   });
+
+  // Non-blocking transactional email notification to HOD
+  try {
+    if (hodAssignment.faculty?.user?.email) {
+      await EmailService.sendQueryEscalated(
+        {
+          email: hodAssignment.faculty.user.email,
+          emailNotifications: hodAssignment.faculty.user.emailNotifications,
+          name: hodAssignment.faculty.name,
+        },
+        {
+          subjectName: query.subjectOfferingSection.subjectOffering.subject.name,
+          studentName: query.student.name,
+          reason: cleanReason,
+        }
+      );
+    }
+  } catch (emailErr) {
+    console.error("[QueryEscalate] Non-blocking email dispatch failure:", emailErr);
+  }
 
   return NextResponse.json({
     message: "Query escalated to HOD successfully",

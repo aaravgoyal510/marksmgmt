@@ -11,8 +11,32 @@ function generatePassword(length = 10): string {
   ).join("");
 }
 
+function parseHostFromDbUrl(dbUrl: string | undefined): string {
+  if (!dbUrl) return "unknown";
+  try {
+    const url = new URL(dbUrl);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch {
+    return "unparseable-url";
+  }
+}
+
 async function main() {
+  console.log("=========================================================================");
   console.log("🌱 Starting seed script execution...");
+  console.log(`📡 Target Database Host: ${parseHostFromDbUrl(process.env.DATABASE_URL)}`);
+  console.log("=========================================================================");
+
+  if ((process.env.NODE_ENV as string) === "production") {
+    console.error("❌ ABORTED: Seeding database is strictly prohibited when NODE_ENV === 'production'.");
+    process.exit(1);
+  }
+
+  if (process.env.ALLOW_DEMO_SEED !== "true") {
+    console.error("❌ ABORTED: Seeding requires explicit confirmation via ALLOW_DEMO_SEED=true environment variable.");
+    console.error("    Run with: ALLOW_DEMO_SEED=true npm run seed");
+    process.exit(1);
+  }
 
   // Clean up existing data
   await prisma.notification.deleteMany();

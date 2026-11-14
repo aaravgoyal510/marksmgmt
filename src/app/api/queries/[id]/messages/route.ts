@@ -3,6 +3,7 @@ import { QueryStatus, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { verifyAuth } from "@/lib/auth/guards";
 import { sanitizeTextInput } from "@/utils/sanitizer";
+import { EmailService } from "@/services/emailService";
 
 export const dynamic = "force-dynamic";
 
@@ -31,9 +32,10 @@ export async function POST(
   const query = await prisma.query.findUnique({
     where: { id: queryId },
     include: {
-      student: true,
-      faculty: true,
-      hod: true,
+      student: { include: { user: true } },
+      faculty: { include: { user: true } },
+      hod: { include: { user: true } },
+      scoreComponent: true,
       subjectOfferingSection: {
         include: {
           subjectOffering: {
@@ -51,35 +53,51 @@ export async function POST(
     );
   }
 
-  // IDOR Protection: Students can only post messages to their own queries
-  if (auth.user.role === Role.STUDENT && query.student.userId !== userId) {
-    return NextResponse.json(
-      {
-        error: "Forbidden: You are not authorized to participate in another student's query thread",
-        code: "IDOR_FORBIDDEN",
-      },
-      { status: 403 }
-    );
-  }
+  // Authorization: Owning student, assigned teaching faculty, or department HOD only when ESCALATED
+  let isAuthorized = false;
 
-  // Authorization check for faculty
-  if (auth.user.role === Role.FACULTY) {
-    const faculty = await prisma.facultyProfile.findUnique({
-      where: { userId },
-      include: { hodAssignments: true },
-    });
-
-    const isAssignedFaculty = query.facultyId === faculty?.id;
-    const isAssignedHOD = query.hodId === faculty?.id;
-    const deptId = query.subjectOfferingSection.subjectOffering.subject.departmentId;
-    const isDeptHOD = faculty?.hodAssignments.some((h) => h.departmentId === deptId);
-
-    if (!isAssignedFaculty && !isAssignedHOD && !isDeptHOD) {
+  if (auth.user.role === Role.STUDENT) {
+    if (query.student.userId !== userId) {
       return NextResponse.json(
-        { error: "Forbidden: You are not authorized to participate in this query thread" },
+        {
+          error: "Forbidden: You are not authorized to participate in another student's query thread",
+          code: "IDOR_FORBIDDEN",
+        },
         { status: 403 }
       );
     }
+    isAuthorized = true;
+  } else if (auth.user.role === Role.FACULTY) {
+    const callerFacultyId = auth.user.facultyId;
+    const assignedSectionFacultyId = query.subjectOfferingSection.facultyId;
+    const isAssignedFaculty =
+      callerFacultyId &&
+      (callerFacultyId === query.facultyId || callerFacultyId === assignedSectionFacultyId);
+
+    if (isAssignedFaculty) {
+      isAuthorized = true;
+    } else if (query.status === QueryStatus.ESCALATED) {
+      const faculty = await prisma.facultyProfile.findUnique({
+        where: { userId },
+        include: { hodAssignments: true },
+      });
+      const deptId = query.subjectOfferingSection.subjectOffering.subject.departmentId;
+      const isDeptHOD = faculty?.hodAssignments.some((h) => h.departmentId === deptId);
+      const isAssignedHOD = query.hodId === faculty?.id;
+      if (isDeptHOD || isAssignedHOD) {
+        isAuthorized = true;
+      }
+    }
+  }
+
+  if (!isAuthorized) {
+    return NextResponse.json(
+      {
+        error: "Forbidden: You are not authorized to participate in this query thread",
+        code: "PARTICIPATION_FORBIDDEN",
+      },
+      { status: 403 }
+    );
   }
 
   const cleanMessage = sanitizeTextInput(message.trim());
@@ -110,6 +128,25 @@ export async function POST(
         link: `/queries/${query.id}`,
       },
     });
+  }
+
+  // Non-blocking transactional email notification (outside DB transaction, never awaited in a failing way)
+  try {
+    if (auth.user.role === Role.FACULTY && query.student?.user?.email) {
+      await EmailService.sendStudentQueryReply(
+        {
+          email: query.student.user.email,
+          emailNotifications: query.student.user.emailNotifications,
+          name: query.student.name,
+        },
+        {
+          subjectName: query.subjectOfferingSection.subjectOffering.subject.name,
+          replyMessage: cleanMessage,
+        }
+      );
+    }
+  } catch (emailErr) {
+    console.error("[QueryReply] Non-blocking email dispatch failure:", emailErr);
   }
 
   return NextResponse.json(

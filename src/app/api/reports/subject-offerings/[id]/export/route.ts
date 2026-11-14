@@ -43,9 +43,52 @@ export async function GET(
     },
   });
 
-  if (!offering || !offering.gradingPolicy) {
+  if (!offering) {
     return NextResponse.json(
-      { error: "Subject offering or policy not found" },
+      { error: "Subject offering not found" },
+      { status: 404 }
+    );
+  }
+
+  // Enforce HOD department scoping & assigned faculty access
+  if (auth.user.role === Role.FACULTY) {
+    const faculty = await prisma.facultyProfile.findUnique({
+      where: { userId: auth.user.userId },
+      include: { hodAssignments: true },
+    });
+
+    const offeringDeptId = offering.subject.departmentId || offering.subject.department?.id;
+    const isDeptHOD = Boolean(
+      faculty?.hodAssignments?.some((h) => h.departmentId === offeringDeptId) ||
+      (auth.user.hodDepartmentId && auth.user.hodDepartmentId === offeringDeptId)
+    );
+    const isAssignedFaculty = offering.sections.some(
+      (s: any) => s.facultyId === faculty?.id
+    );
+
+    const isHOD = Boolean(
+      (faculty?.hodAssignments && faculty.hodAssignments.length > 0) ||
+      faculty?.hodAssignments?.[0]?.departmentId ||
+      auth.user.isHOD ||
+      auth.user.hodDepartmentId
+    );
+
+    if (!isDeptHOD && !isAssignedFaculty) {
+      return NextResponse.json(
+        {
+          error: isHOD
+            ? "Access denied: HOD can only export reports for their own department"
+            : "Access denied: Faculty can only export reports for offerings they teach",
+          code: "FORBIDDEN_REPORT_SCOPE",
+        },
+        { status: 403 }
+      );
+    }
+  }
+
+  if (!offering.gradingPolicy) {
+    return NextResponse.json(
+      { error: "Subject offering policy not found" },
       { status: 404 }
     );
   }

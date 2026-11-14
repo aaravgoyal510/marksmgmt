@@ -59,6 +59,26 @@ export async function GET(
     );
   }
 
+  // Publication gate: Students can only download PDF for published sections
+  if (auth.user.role === Role.STUDENT) {
+    const studentOfferingSection = await prisma.subjectOfferingSection.findFirst({
+      where: {
+        subjectOfferingId: offeringId,
+        sectionId: student.sectionId,
+      },
+    });
+
+    if (!studentOfferingSection || !studentOfferingSection.marksPublishedAt) {
+      return NextResponse.json(
+        {
+          error: "Forbidden: Marks for this subject offering have not yet been published by faculty",
+          code: "MARKS_NOT_PUBLISHED",
+        },
+        { status: 403 }
+      );
+    }
+  }
+
   const policy = offering.gradingPolicy;
 
   // Fetch marks and attendance

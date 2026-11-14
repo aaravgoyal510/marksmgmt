@@ -328,18 +328,41 @@ export async function PUT(req: NextRequest) {
       return { marks: markResults, attendance: attendanceResults };
     });
 
+    const isAlreadyPublished = Boolean(offeringSection.marksPublishedAt);
+
+    // If section was already published, audit this modification and prepare a warning
+    if (isAlreadyPublished && hasMarkEntries) {
+      try {
+        await prisma.auditLog.create({
+          data: {
+            entityType: "SubjectOfferingSection",
+            entityId: offeringSection.id,
+            changedByUserId: auth.user.userId,
+            oldValue: "PUBLISHED_MARKS",
+            newValue: "MARKS_EDITED_AFTER_PUBLISH",
+          },
+        });
+      } catch (auditErr) {
+        console.error("Failed to write audit log for published marks edit:", auditErr);
+      }
+    }
+
     const totalCount =
       transactionResult.marks.length + transactionResult.attendance.length;
 
-    return NextResponse.json(
-      {
-        message: "Marks and attendance updated successfully",
-        count: totalCount,
-        updatedCount: totalCount,
-        auditLogsCreated: auditLogsToCreate.length,
-      },
-      { status: 200 }
-    );
+    const responsePayload: any = {
+      message: "Marks and attendance updated successfully",
+      count: totalCount,
+      updatedCount: totalCount,
+      auditLogsCreated: auditLogsToCreate.length,
+    };
+
+    if (isAlreadyPublished) {
+      responsePayload.warning =
+        "Marks edited on an already published section. Students will see changes immediately.";
+    }
+
+    return NextResponse.json(responsePayload, { status: 200 });
   } catch (error: any) {
     return NextResponse.json(
       { error: error?.message || "Failed to update marks and attendance" },

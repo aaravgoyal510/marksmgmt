@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GET as exportGet } from "@/app/api/reports/subject-offerings/[id]/export/route";
+import { GET as historyGet } from "@/app/api/reports/history/route";
 import { POST as changePassPost } from "@/app/api/profile/change-password/route";
 import { prisma } from "@/lib/prisma";
 import { comparePassword, hashPassword } from "@/utils/password";
@@ -16,7 +17,7 @@ vi.mock("@/utils/password", () => ({
   hashPassword: vi.fn(),
 }));
 
-describe("Phase 7: Reports Export & Profile Management", () => {
+describe("Phase 5: Reports Export & History Scoping + Profile Management", () => {
   const facultyToken = createToken({
     userId: "user-fac-1",
     username: "FAC001",
@@ -24,12 +25,26 @@ describe("Phase 7: Reports Export & Profile Management", () => {
     facultyId: "fac-p1",
   });
 
+  const hodToken = createToken({
+    userId: "user-hod-1",
+    username: "HOD001",
+    role: Role.FACULTY,
+    facultyId: "fac-hod-1",
+    hodDepartmentId: "dept-bca",
+  });
+
+  const adminToken = createToken({
+    userId: "user-admin-1",
+    username: "ADMIN001",
+    role: Role.ADMIN,
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  describe("Excel Report Export", () => {
-    it("exports Excel report workbook buffer with correct Content-Type and Content-Disposition", async () => {
+  describe("Excel Report Export (Scoping & Security Guards)", () => {
+    it("exports Excel report workbook buffer with correct Content-Type and Content-Disposition for assigned faculty", async () => {
       const req = createTestRequest(
         "/api/reports/subject-offerings/offering-report-1/export",
         {
@@ -38,12 +53,17 @@ describe("Phase 7: Reports Export & Profile Management", () => {
         }
       );
 
+      (prisma.facultyProfile.findUnique as any).mockResolvedValue({
+        id: "fac-p1",
+        hodAssignments: [],
+      });
+
       (prisma.subjectOffering.findUnique as any).mockResolvedValue({
         id: "offering-report-1",
         subject: {
           name: "Web Technologies",
           code: "BCA101",
-          department: { name: "BCA" },
+          department: { id: "dept-bca", name: "BCA" },
         },
         academicTerm: { label: "AY2025-26" },
         gradingPolicy: {
@@ -60,6 +80,7 @@ describe("Phase 7: Reports Export & Profile Management", () => {
         sections: [
           {
             id: "sec-m-id",
+            facultyId: "fac-p1",
             section: {
               name: "M",
               students: [
@@ -92,6 +113,182 @@ describe("Phase 7: Reports Export & Profile Management", () => {
 
       const arrayBuffer = await res.arrayBuffer();
       expect(arrayBuffer.byteLength).toBeGreaterThan(0);
+    });
+
+    it("rejects export with HTTP 403 when HOD attempts to export an offering belonging to another department", async () => {
+      const req = createTestRequest(
+        "/api/reports/subject-offerings/offering-mba-1/export",
+        {
+          method: "GET",
+          token: hodToken,
+        }
+      );
+
+      // HOD belongs to BCA, but offering is MBA
+      (prisma.facultyProfile.findUnique as any).mockResolvedValue({
+        id: "fac-hod-1",
+        hodAssignments: [
+          { id: "hod-assign-1", facultyId: "fac-hod-1", departmentId: "dept-bca" },
+        ],
+      });
+
+      (prisma.subjectOffering.findUnique as any).mockResolvedValue({
+        id: "offering-mba-1",
+        subject: {
+          name: "Marketing Management",
+          code: "MBA101",
+          departmentId: "dept-mba",
+          department: { id: "dept-mba", name: "MBA" },
+        },
+        academicTerm: { label: "AY2025-26" },
+        gradingPolicy: null,
+        sections: [],
+      });
+
+      const res = await exportGet(req, { params: { id: "offering-mba-1" } });
+      const { status, data } = await parseJsonResponse<any>(res);
+
+      expect(status).toBe(403);
+      expect(data.error).toContain("Access denied: HOD can only export reports for their own department");
+    });
+
+    it("rejects export with HTTP 403 when Faculty is not assigned to any section of the offering", async () => {
+      const req = createTestRequest(
+        "/api/reports/subject-offerings/offering-foreign/export",
+        {
+          method: "GET",
+          token: facultyToken,
+        }
+      );
+
+      (prisma.facultyProfile.findUnique as any).mockResolvedValue({
+        id: "fac-p1",
+        hodAssignments: [],
+      });
+
+      (prisma.subjectOffering.findUnique as any).mockResolvedValue({
+        id: "offering-foreign",
+        subject: {
+          name: "Cloud Computing",
+          code: "BCA301",
+          departmentId: "dept-bca",
+          department: { id: "dept-bca", name: "BCA" },
+        },
+        academicTerm: { label: "AY2025-26" },
+        gradingPolicy: null,
+        sections: [
+          {
+            id: "sec-other",
+            facultyId: "fac-other-person",
+            section: { name: "A", students: [] },
+          },
+        ],
+      });
+
+      const res = await exportGet(req, { params: { id: "offering-foreign" } });
+      const { status, data } = await parseJsonResponse<any>(res);
+
+      expect(status).toBe(403);
+      expect(data.error).toContain("Access denied: Faculty can only export reports for offerings they teach");
+    });
+  });
+
+  describe("Reports History & Term Archive Scoping (GET /api/reports/history)", () => {
+    it("returns history offerings scoped to HOD department", async () => {
+      const req = createTestRequest("/api/reports/history", {
+        method: "GET",
+        token: hodToken,
+      });
+
+      (prisma.facultyProfile.findUnique as any).mockResolvedValue({
+        id: "fac-hod-1",
+        hodAssignments: [
+          { id: "hod-assign-1", facultyId: "fac-hod-1", departmentId: "dept-bca" },
+        ],
+      });
+
+      (prisma.academicTerm.findMany as any).mockResolvedValue([
+        { id: "term-1", semesterNumber: 1, label: "AY2025-26", departmentId: "dept-bca" },
+      ]);
+
+      (prisma.subjectOffering.findMany as any).mockResolvedValue([
+        {
+          id: "off-1",
+          academicTermId: "term-1",
+          academicTerm: { id: "term-1", semesterNumber: 1, label: "AY2025-26" },
+          subject: {
+            id: "sub-1",
+            name: "Database Systems",
+            code: "BCA102",
+            department: { id: "dept-bca", name: "BCA" },
+          },
+          gradingPolicy: { id: "pol-1", isConfirmed: true },
+          sections: [
+            {
+              id: "sec-1",
+              faculty: { user: { name: "Prof. Sharma" } },
+              section: { name: "A", students: [{ id: "st-1" }] },
+            },
+          ],
+        },
+      ]);
+
+      const res = await historyGet(req);
+      const { status, data } = await parseJsonResponse<any>(res);
+
+      expect(status).toBe(200);
+      expect(data.offerings).toHaveLength(1);
+      expect(data.offerings[0].subjectCode).toBe("BCA102");
+      expect(data.offerings[0].departmentName).toBe("BCA");
+      expect(prisma.subjectOffering.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            subject: { departmentId: { in: ["dept-bca"] } },
+          }),
+        })
+      );
+    });
+
+    it("rejects HOD with HTTP 403 when attempting to access another department's history archive", async () => {
+      const req = createTestRequest("/api/reports/history?departmentId=dept-mba", {
+        method: "GET",
+        token: hodToken,
+      });
+
+      (prisma.facultyProfile.findUnique as any).mockResolvedValue({
+        id: "fac-hod-1",
+        hodAssignments: [
+          { id: "hod-assign-1", facultyId: "fac-hod-1", departmentId: "dept-bca" },
+        ],
+      });
+
+      const res = await historyGet(req);
+      const { status, data } = await parseJsonResponse<any>(res);
+
+      expect(status).toBe(403);
+      expect(data.error).toContain("Access denied: HOD can only view reports for their own department");
+    });
+
+    it("allows ADMIN to filter any department without cross-department denial", async () => {
+      const req = createTestRequest("/api/reports/history?departmentId=dept-mba", {
+        method: "GET",
+        token: adminToken,
+      });
+
+      (prisma.academicTerm.findMany as any).mockResolvedValue([]);
+      (prisma.subjectOffering.findMany as any).mockResolvedValue([]);
+
+      const res = await historyGet(req);
+      const { status } = await parseJsonResponse<any>(res);
+
+      expect(status).toBe(200);
+      expect(prisma.subjectOffering.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            subject: { departmentId: { in: ["dept-mba"] } },
+          }),
+        })
+      );
     });
   });
 

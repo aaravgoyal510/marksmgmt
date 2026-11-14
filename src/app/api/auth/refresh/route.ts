@@ -16,13 +16,29 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const newAccessToken = AuthService.refreshAccessToken(refreshToken);
-    if (!newAccessToken) {
+    const result = await AuthService.refreshAccessToken(refreshToken);
+    if (!result) {
       return NextResponse.json(
         { error: "Invalid or expired refresh token" },
         { status: 401 }
       );
     }
+
+    if (result === "DEACTIVATED") {
+      return NextResponse.json(
+        { error: "Account is deactivated" },
+        { status: 401 }
+      );
+    }
+
+    if (result === "INVALID_VERSION") {
+      return NextResponse.json(
+        { error: "Session has expired or was revoked" },
+        { status: 401 }
+      );
+    }
+
+    const newAccessToken = result.accessToken;
 
     const isProd = process.env.NODE_ENV === "production";
     const res = NextResponse.json({ accessToken: newAccessToken });

@@ -156,6 +156,8 @@ export async function GET(
     return NextResponse.json(
       {
         sectionId,
+        isPublished: Boolean(offeringSection.marksPublishedAt),
+        marksPublishedAt: offeringSection.marksPublishedAt,
         subjectName: offeringSection.subjectOffering.subject.name,
         subjectCode: offeringSection.subjectOffering.subject.code,
         policy: {

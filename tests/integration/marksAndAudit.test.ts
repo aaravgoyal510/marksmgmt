@@ -26,6 +26,10 @@ describe("Phase 4: Bulk Marks Entry & Audit Logging Engine", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    (prisma.studentProfile.findMany as any).mockResolvedValue([
+      { id: "student-aarav", userId: "user-aarav" },
+      { id: "student-rohan", userId: "user-rohan" },
+    ]);
   });
 
   it("rejects direct mark edits by an HOD on a section where they are not assigned as teaching faculty with HTTP 403 TEACHING_FACULTY_ONLY", async () => {

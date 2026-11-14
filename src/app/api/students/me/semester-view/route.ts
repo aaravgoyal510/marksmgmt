@@ -95,13 +95,60 @@ export async function GET(req: NextRequest) {
     if (!policy) {
       // Policy not configured yet
       subjectBreakdowns.push({
+        offeringId: offering.id,
+        offeringSectionId: offeringSection?.id ?? null,
         subjectId: offering.subject.id,
         subjectName: offering.subject.name,
         subjectCode: offering.subject.code,
         facultyName: offeringSection?.faculty?.name ?? "Unassigned",
         status: "POLICY_PENDING",
+        isPublished: false,
+        marksPublishedAt: null,
         components: [],
-        computed: null,
+        attendancePercent: null,
+        computedScores: null,
+      });
+      continue;
+    }
+
+    const isPublished = Boolean(offeringSection?.marksPublishedAt);
+
+    if (!isPublished) {
+      // Unpublished section: marks and attendance are hidden from students
+      subjectBreakdowns.push({
+        offeringId: offering.id,
+        offeringSectionId: offeringSection?.id ?? null,
+        subjectId: offering.subject.id,
+        subjectName: offering.subject.name,
+        subjectCode: offering.subject.code,
+        facultyName: offeringSection?.faculty?.name ?? "Unassigned",
+        status: "NOT_YET_PUBLISHED",
+        isPublished: false,
+        marksPublishedAt: null,
+        policyWeightages: {
+          ces: policy.cesGroupWeightage,
+          internal: policy.internalWeightage,
+          attendance: policy.attendanceWeightage,
+          attendanceShortfallPercent: policy.attendanceShortfallPercent ?? 75,
+          totalIAMarks:
+            policy.cesGroupWeightage +
+            policy.internalWeightage +
+            policy.attendanceWeightage,
+        },
+        attendanceSlabs: policy.attendanceSlabRanges.map((s) => ({
+          minPercent: s.minPercent,
+          maxPercent: s.maxPercent,
+          marks: s.marks,
+        })),
+        components: policy.scoreComponents.map((c) => ({
+          id: c.id,
+          name: c.name,
+          group: c.group,
+          maxMarks: c.maxMarks,
+          marksObtained: null,
+        })),
+        attendancePercent: null,
+        computedScores: null,
       });
       continue;
     }
@@ -175,13 +222,21 @@ export async function GET(req: NextRequest) {
       subjectName: offering.subject.name,
       subjectCode: offering.subject.code,
       facultyName: offeringSection?.faculty?.name ?? "Unassigned",
-      status: policy.confirmedAt ? "PUBLISHED" : "UNCONFIRMED",
+      status: "PUBLISHED",
+      isPublished: true,
+      marksPublishedAt: offeringSection?.marksPublishedAt ?? null,
       policyWeightages: {
         ces: policy.cesGroupWeightage,
         internal: policy.internalWeightage,
         attendance: policy.attendanceWeightage,
+        attendanceShortfallPercent: policy.attendanceShortfallPercent ?? 75,
         totalIAMarks: policy.cesGroupWeightage + policy.internalWeightage + policy.attendanceWeightage,
       },
+      attendanceSlabs: policy.attendanceSlabRanges.map((s) => ({
+        minPercent: s.minPercent,
+        maxPercent: s.maxPercent,
+        marks: s.marks,
+      })),
       components: componentDetails,
       attendancePercent,
       computedScores: {

@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { fetchApi } from "@/lib/api";
 import { validateSlabsClient } from "@/lib/slabValidation";
 import HeaderNav from "@/components/HeaderNav";
-import { Plus, Copy, CheckCircle, AlertTriangle, XCircle, ArrowUpRight, Lock, UserCheck, BookOpen, Layers, ArrowRightLeft } from "lucide-react";
+import QueryThread from "@/components/QueryThread";
+import { Plus, Copy, CheckCircle, AlertTriangle, XCircle, ArrowUpRight, Lock, UserCheck, BookOpen, Layers, ArrowRightLeft, MessageSquare, ShieldAlert, Download, Archive, FileSpreadsheet, BarChart2 } from "lucide-react";
+import { SectionAnalyticsCard } from "@/components/SectionAnalyticsCard";
 
 export default function HODDashboard() {
   const [authorized, setAuthorized] = useState(false);
@@ -23,12 +25,21 @@ export default function HODDashboard() {
       });
   }, []);
 
-  const [activeTab, setActiveTab] = useState<"board" | "subjects">("board");
+  const [activeTab, setActiveTab] = useState<"board" | "subjects" | "queries" | "history">("board");
 
   const [statusBoard, setStatusBoard] = useState<any[]>([]);
   const [masterSubjects, setMasterSubjects] = useState<any[]>([]);
   const [departmentBatches, setDepartmentBatches] = useState<any[]>([]);
   const [availableFaculty, setAvailableFaculty] = useState<any[]>([]);
+  const [escalatedQueries, setEscalatedQueries] = useState<any[]>([]);
+  const [loadingQueries, setLoadingQueries] = useState(false);
+
+  // History & Reports State
+  const [historyTerms, setHistoryTerms] = useState<any[]>([]);
+  const [historyOfferings, setHistoryOfferings] = useState<any[]>([]);
+  const [historyTermFilter, setHistoryTermFilter] = useState<string>("");
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
   const [loading, setLoading] = useState(true);
 
   // Department State
@@ -36,6 +47,17 @@ export default function HODDashboard() {
   const [deptNameDisplay, setDeptNameDisplay] = useState("");
   const [authorizedDepartments, setAuthorizedDepartments] = useState<any[]>([]);
   const [promotionNotice, setPromotionNotice] = useState<string | null>(null);
+
+  // Promotion Preview Modal
+  const [promoteModal, setPromoteModal] = useState<{
+    open: boolean;
+    batchId: string;
+    batchLabel: string;
+    preview: any | null;
+    loading: boolean;
+  } | null>(null);
+  const [typedConfirmLabel, setTypedConfirmLabel] = useState("");
+  const [executingPromote, setExecutingPromote] = useState(false);
 
   // New Subject Form
   const [newSubName, setNewSubName] = useState("");
@@ -51,12 +73,17 @@ export default function HODDashboard() {
     currentFacultyId: string | null;
   } | null>(null);
   const [selectedFacultyId, setSelectedFacultyId] = useState<string>("");
+  const [reassignReason, setReassignReason] = useState<string>("");
+
+  // Section Analytics Modal
+  const [analyticsSectionId, setAnalyticsSectionId] = useState<string | null>(null);
 
   // Policy Builder Modal
   const [policyModal, setPolicyModal] = useState<{ open: boolean; offeringId: string; subjectName: string; isConfirmed?: boolean } | null>(null);
   const [cesWeight, setCesWeight] = useState(10);
   const [intWeight, setIntWeight] = useState(20);
   const [attWeight, setAttWeight] = useState(10);
+  const [attShortfallThreshold, setAttShortfallThreshold] = useState(75);
   const [cesComponents, setCesComponents] = useState([
     { name: "CES-I", maxMarks: 10 },
     { name: "CES-II", maxMarks: 10 },
@@ -90,6 +117,33 @@ export default function HODDashboard() {
     }
   }, [selectedDeptId]);
 
+  const loadEscalatedQueries = async () => {
+    setLoadingQueries(true);
+    try {
+      const res = await fetchApi("/queries?scope=HOD");
+      setEscalatedQueries(res.queries || []);
+    } catch (err) {
+      console.error("Failed to load escalated queries", err);
+    } finally {
+      setLoadingQueries(false);
+    }
+  };
+
+  const loadHistoryData = async (termId?: string) => {
+    if (!selectedDeptId) return;
+    setLoadingHistory(true);
+    try {
+      const q = `/reports/history?departmentId=${selectedDeptId}${termId ? `&academicTermId=${termId}` : ""}`;
+      const res = await fetchApi(q);
+      setHistoryTerms(res.terms || []);
+      setHistoryOfferings(res.offerings || []);
+    } catch (err) {
+      console.error("Failed to load history reports", err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
   const loadDashboardData = async () => {
     if (!selectedDeptId) return;
     setLoading(true);
@@ -114,6 +168,9 @@ export default function HODDashboard() {
       // Fetch complete teaching faculty list for HOD assignment
       const facRes = await fetchApi("/hod/faculty-list").catch(() => null);
       setAvailableFaculty(facRes?.faculty || []);
+
+      // Load escalated queries for this HOD
+      loadEscalatedQueries();
     } catch (err) {
       console.error(err);
     } finally {
@@ -142,47 +199,85 @@ export default function HODDashboard() {
     }
   };
 
-  const handleHODPromoteBatch = async (batchId: string, label: string, currentSem: number, maxSem: number) => {
-    if (currentSem >= maxSem) {
-      alert(`Batch ${label} has already reached maximum totalSemesters (${maxSem})`);
-      return;
-    }
-
-    if (!confirm(`Are you sure you want to promote Batch ${label} to Semester ${currentSem + 1}? This will scaffold new term offerings.`)) {
-      return;
-    }
-
+  const handleOpenHODPromoteModal = async (batchId: string, label: string) => {
+    setPromoteModal({
+      open: true,
+      batchId,
+      batchLabel: label,
+      preview: null,
+      loading: true,
+    });
+    setTypedConfirmLabel("");
     try {
-      const res = await fetchApi(`/hod/batches/${batchId}/promote`, {
+      const preview = await fetchApi(`/hod/batches/${batchId}/promote/preview`);
+      setPromoteModal((prev) => (prev ? { ...prev, preview, loading: false } : null));
+    } catch (err: any) {
+      alert(err.data?.error || "Failed to load promotion preview");
+      setPromoteModal(null);
+    }
+  };
+
+  const handleExecuteHODPromote = async () => {
+    if (!promoteModal || !promoteModal.preview) return;
+    if (typedConfirmLabel.trim() !== promoteModal.batchLabel.trim()) {
+      alert(`Please type "${promoteModal.batchLabel}" exactly to confirm promotion.`);
+      return;
+    }
+
+    setExecutingPromote(true);
+    try {
+      const res = await fetchApi(`/hod/batches/${promoteModal.batchId}/promote`, {
         method: "POST",
       });
 
       setPromotionNotice(
-        `Batch ${label} successfully promoted to Semester ${res.batch.currentSemester}! Status board updated with new UNASSIGNED offerings below.`
+        `Batch ${promoteModal.batchLabel} successfully promoted to Semester ${res.batch.currentSemester}! Status board updated with new UNASSIGNED offerings below.`
       );
+      setPromoteModal(null);
       loadDashboardData();
     } catch (err: any) {
       if (err.status === 403) {
-        alert(`Forbidden (HTTP 403): You are not authorized as HOD for this batch's department.`);
+        alert("Forbidden (HTTP 403): You are not authorized as HOD for this batch's department.");
       } else {
         alert(err.data?.error || "Failed to promote batch");
       }
+    } finally {
+      setExecutingPromote(false);
     }
   };
 
   const handleAssignFacultySubmit = async () => {
     if (!assignModal) return;
 
+    const isReassign = Boolean(
+      assignModal.currentFacultyId && assignModal.currentFacultyId !== selectedFacultyId
+    );
+
+    if (isReassign && !reassignReason.trim()) {
+      alert("Please provide a reason for reassigning faculty.");
+      return;
+    }
+
     try {
       await fetchApi(
         `/hod/subject-offerings/${assignModal.offeringId}/sections/${assignModal.sectionId}/assign-faculty`,
         {
           method: "POST",
-          body: JSON.stringify({ facultyId: selectedFacultyId || null }),
+          body: JSON.stringify({
+            facultyId: selectedFacultyId || null,
+            reason: isReassign ? reassignReason.trim() : undefined,
+          }),
         }
       );
-      alert(selectedFacultyId ? "Faculty assigned successfully!" : "Faculty unassigned successfully!");
+      alert(
+        selectedFacultyId
+          ? isReassign
+            ? "Faculty reassigned successfully!"
+            : "Faculty assigned successfully!"
+          : "Faculty unassigned successfully!"
+      );
       setAssignModal(null);
+      setReassignReason("");
       loadDashboardData();
     } catch (err: any) {
       alert(err.data?.error || "Failed to assign faculty member");
@@ -200,6 +295,7 @@ export default function HODDashboard() {
         setCesWeight(res.policy.cesGroupWeightage);
         setIntWeight(res.policy.internalWeightage);
         setAttWeight(res.policy.attendanceWeightage);
+        setAttShortfallThreshold(res.policy.attendanceShortfallPercent ?? 75);
         if (res.policy.scoreComponents?.length) {
           const cesComps = res.policy.scoreComponents
             .filter((c: any) => c.group === "CES")
@@ -241,6 +337,7 @@ export default function HODDashboard() {
           cesGroupWeightage: Number(cesWeight),
           internalWeightage: Number(intWeight),
           attendanceWeightage: Number(attWeight),
+          attendanceShortfallPercent: Number(attShortfallThreshold),
           scoreComponents: components,
           attendanceSlabRanges: slabs,
         }),
@@ -357,6 +454,34 @@ export default function HODDashboard() {
         >
           <BookOpen className="w-4 h-4" /> Master Department Subjects & Creation ({masterSubjects.length})
         </button>
+
+        <button
+          onClick={() => {
+            setActiveTab("queries");
+            loadEscalatedQueries();
+          }}
+          className={`pb-3 text-sm font-semibold border-b-2 flex items-center gap-2 ${
+            activeTab === "queries"
+              ? "border-[#3730A3] text-[#3730A3]"
+              : "border-transparent text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          <MessageSquare className="w-4 h-4" /> Escalated Grievances ({escalatedQueries.length})
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveTab("history");
+            loadHistoryData(historyTermFilter);
+          }}
+          className={`pb-3 text-sm font-semibold border-b-2 flex items-center gap-2 ${
+            activeTab === "history"
+              ? "border-[#3730A3] text-[#3730A3]"
+              : "border-transparent text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          <Archive className="w-4 h-4" /> Past Terms & Reports History
+        </button>
       </div>
 
       {/* TAB 1: CURRENT TERM OFFERINGS & STATUS BOARD */}
@@ -395,7 +520,7 @@ export default function HODDashboard() {
                       </div>
 
                       <button
-                        onClick={() => handleHODPromoteBatch(b.id, b.label, b.currentSemester, maxSem)}
+                        onClick={() => handleOpenHODPromoteModal(b.id, b.label)}
                         disabled={isMax}
                         className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1 ${
                           isMax
@@ -444,6 +569,14 @@ export default function HODDashboard() {
                       </div>
 
                       <div className="flex gap-2">
+                        <a
+                          href={`/api/reports/subject-offerings/${offering.offeringId}/export`}
+                          download
+                          className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-semibold rounded-lg flex items-center gap-1 transition-colors"
+                          title="Export Consolidated IA Report (Excel)"
+                        >
+                          <Download className="w-3.5 h-3.5 text-emerald-700" /> Export Excel
+                        </a>
                         <button
                           onClick={() => handleDuplicatePolicy(offering.offeringId)}
                           className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-semibold rounded-lg flex items-center gap-1"
@@ -483,6 +616,29 @@ export default function HODDashboard() {
                             <span className="text-xs text-slate-500 block">
                               Faculty: <span className="font-semibold text-slate-700">{sec.facultyName || "Unassigned"}</span>
                             </span>
+                            <div className="flex flex-wrap items-center gap-2 mt-1.5 text-xs">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                                <strong>Marks:</strong> {sec.marksEnteredStudents ?? 0} / {sec.totalStudents ?? 0} students
+                              </span>
+                              {sec.attendanceUploaded ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  Attendance Uploaded
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                                  Attendance Pending
+                                </span>
+                              )}
+                              {sec.isPublished ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300">
+                                  Published
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium bg-slate-100 text-slate-500 border border-slate-200">
+                                  Unpublished
+                                </span>
+                              )}
+                            </div>
                           </div>
 
                           <div className="flex items-center gap-3">
@@ -503,6 +659,14 @@ export default function HODDashboard() {
                             )}
 
                             <button
+                              onClick={() => setAnalyticsSectionId(sec.sectionId)}
+                              className="px-2.5 py-1 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold rounded flex items-center gap-1 shadow-sm"
+                              title="View section performance and attendance analytics"
+                            >
+                              <BarChart2 className="w-3.5 h-3.5 text-indigo-600" /> Analytics
+                            </button>
+
+                            <button
                               onClick={() => {
                                 setAssignModal({
                                   open: true,
@@ -512,6 +676,7 @@ export default function HODDashboard() {
                                   currentFacultyId: sec.facultyId,
                                 });
                                 setSelectedFacultyId(sec.facultyId || "");
+                                setReassignReason("");
                               }}
                               className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-[#3730A3] border border-indigo-200 text-xs font-semibold rounded flex items-center gap-1"
                             >
@@ -622,6 +787,272 @@ export default function HODDashboard() {
         </div>
       )}
 
+      {/* TAB 3: ESCALATED GRIEVANCES (HOD DIRECTIVE VIEW) */}
+      {activeTab === "queries" && (
+        <div className="space-y-6">
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 flex items-start gap-3">
+            <ShieldAlert className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div className="text-xs text-amber-900 leading-relaxed">
+              <strong className="font-semibold block text-sm mb-1 text-amber-950">
+                HOD Department Scoping & Zero Direct Mark Modification Policy
+              </strong>
+              You are viewing escalated student grievance queries belonging exclusively to your department ({deptNameDisplay}).
+              As HOD, you can review the query discussion and post instructional directives to teaching faculty. In compliance with academic integrity guidelines, HODs cannot directly overwrite student marks; all mark corrections must be executed by the assigned faculty member following your directive.
+            </div>
+          </div>
+
+          {loadingQueries ? (
+            <div className="p-12 text-center text-slate-500 bg-white rounded-xl border border-slate-200 font-medium text-sm">
+              Loading escalated department grievances...
+            </div>
+          ) : escalatedQueries.length === 0 ? (
+            <div className="p-12 text-center text-slate-500 bg-white rounded-xl border border-slate-200 font-medium text-sm">
+              No escalated grievance queries found for {deptNameDisplay}.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {escalatedQueries.map((q) => (
+                <QueryThread
+                  key={q.id}
+                  query={q}
+                  currentRole="HOD"
+                  onRefresh={loadEscalatedQueries}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 4: PAST TERMS & OFFERINGS ARCHIVE */}
+      {activeTab === "history" && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Archive className="w-5 h-5 text-[#3730A3]" /> Past Terms & Academic Offerings Archive ({deptNameDisplay})
+              </h2>
+              <p className="text-xs text-slate-500">
+                Read-only repository of current and historical subject offerings for {deptNameDisplay}. Download consolidated IA spreadsheets and audit historical grades.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-semibold text-slate-600 uppercase">Filter Term:</label>
+              <select
+                value={historyTermFilter}
+                onChange={(e) => {
+                  setHistoryTermFilter(e.target.value);
+                  loadHistoryData(e.target.value);
+                }}
+                className="p-2 border border-slate-300 rounded-lg text-xs bg-slate-50 font-medium focus:ring-2 focus:ring-indigo-600"
+              >
+                <option value="">All Academic Terms</option>
+                {historyTerms.map((t: any) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label} (Sem {t.semesterNumber})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {loadingHistory ? (
+            <div className="p-12 text-center text-slate-500 font-medium text-sm">
+              Loading historical offerings and reports...
+            </div>
+          ) : historyOfferings.length === 0 ? (
+            <div className="p-12 text-center text-slate-400 font-medium text-xs border border-slate-200 rounded-lg">
+              No historical offerings found for {deptNameDisplay}.
+            </div>
+          ) : (
+            <div className="overflow-x-auto border border-slate-200 rounded-lg">
+              <table className="w-full text-left text-sm border-collapse">
+                <thead>
+                  <tr className="bg-slate-100 border-b border-slate-200 text-xs font-semibold text-slate-600 uppercase">
+                    <th className="py-3 px-4">Subject</th>
+                    <th className="py-3 px-4">Academic Term</th>
+                    <th className="py-3 px-4">Sections & Assigned Faculty</th>
+                    <th className="py-3 px-4 text-center">Enrolled Students</th>
+                    <th className="py-3 px-4 text-center">Grading Policy</th>
+                    <th className="py-3 px-4 text-right">Consolidated Reports</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {historyOfferings.map((off: any) => (
+                    <tr key={off.id} className="hover:bg-slate-50">
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-slate-900">{off.subjectName}</div>
+                        <span className="font-mono text-xs font-semibold text-[#3730A3]">{off.subjectCode}</span>
+                      </td>
+
+                      <td className="py-3 px-4 text-xs">
+                        <span className="font-semibold text-slate-800">{off.termLabel}</span>
+                        <span className="text-slate-400 block text-[11px]">Semester {off.semesterNumber}</span>
+                      </td>
+
+                      <td className="py-3 px-4 text-xs space-y-1">
+                        {off.sections.map((sec: any) => (
+                          <div key={sec.id} className="text-slate-600">
+                            <span className="font-bold text-slate-800">Sec {sec.name}:</span> {sec.facultyName} ({sec.studentsCount} students)
+                          </div>
+                        ))}
+                      </td>
+
+                      <td className="py-3 px-4 text-center font-bold text-slate-700">
+                        {off.enrolledStudentsCount}
+                      </td>
+
+                      <td className="py-3 px-4 text-center">
+                        {off.isPolicyConfirmed ? (
+                          <span className="pill-emerald">Confirmed</span>
+                        ) : (
+                          <span className="pill-amber">Draft / Unconfirmed</span>
+                        )}
+                      </td>
+
+                      <td className="py-3 px-4 text-right">
+                        <div className="flex justify-end gap-2">
+                          <a
+                            href={off.exportUrl}
+                            download
+                            className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded text-xs font-semibold inline-flex items-center gap-1 transition-colors"
+                            title="Download Excel Workbook"
+                          >
+                            <Download className="w-3.5 h-3.5 text-emerald-600" /> Excel
+                          </a>
+                          <a
+                            href={`${off.exportUrl}?format=csv`}
+                            download
+                            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded text-xs font-semibold inline-flex items-center gap-1 transition-colors"
+                            title="Download CSV"
+                          >
+                            <FileSpreadsheet className="w-3.5 h-3.5 text-slate-500" /> CSV
+                          </a>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Promotion Preview Modal */}
+      {promoteModal?.open && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl p-6 max-w-lg w-full space-y-4 shadow-xl">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <ArrowUpRight className="w-5 h-5 text-emerald-600" />
+                Promote Batch Preview: {promoteModal.batchLabel}
+              </h3>
+              <button
+                onClick={() => setPromoteModal(null)}
+                className="text-slate-400 hover:text-slate-600 font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {promoteModal.loading ? (
+              <div className="p-8 text-center text-slate-500 text-sm">
+                Generating promotion dry-run preview...
+              </div>
+            ) : promoteModal.preview ? (
+              <div className="space-y-4">
+                {promoteModal.preview.warning && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs font-semibold flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                    <span>{promoteModal.preview.warning}</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                    <span className="text-slate-500 block uppercase text-[10px] font-bold">Target Semester</span>
+                    <span className="text-base font-extrabold text-slate-900">
+                      Sem {promoteModal.preview.currentSemester} → Sem {promoteModal.preview.targetSemester}
+                    </span>
+                  </div>
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                    <span className="text-slate-500 block uppercase text-[10px] font-bold">Academic Term</span>
+                    <span className="text-sm font-bold text-indigo-900">
+                      {promoteModal.preview.academicTermLabel}
+                    </span>
+                    <span className="text-[10px] text-slate-500 block">
+                      {promoteModal.preview.termWillBeCreated ? "(Will be created)" : "(Reusing existing term)"}
+                    </span>
+                  </div>
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                    <span className="text-slate-500 block uppercase text-[10px] font-bold">Subject Offerings</span>
+                    <span className="text-base font-extrabold text-slate-900">
+                      {promoteModal.preview.newOfferingsCount} new ({promoteModal.preview.subjectsCount} subjects)
+                    </span>
+                  </div>
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                    <span className="text-slate-500 block uppercase text-[10px] font-bold">Section Offerings</span>
+                    <span className="text-base font-extrabold text-slate-900">
+                      {promoteModal.preview.newSectionsCount} new ({promoteModal.preview.sectionsCount} sections)
+                    </span>
+                  </div>
+                </div>
+
+                {promoteModal.preview.studentsWithOverride?.length > 0 && (
+                  <div className="p-3 bg-indigo-50/60 border border-indigo-200 rounded-lg text-xs space-y-1">
+                    <span className="font-bold text-indigo-900 block">
+                      Students with Semester Override ({promoteModal.preview.studentsWithOverride.length}):
+                    </span>
+                    <p className="text-[11px] text-slate-600">
+                      These students will remain evaluated in their overridden semester and will not advance to Sem {promoteModal.preview.targetSemester}:
+                    </p>
+                    <div className="max-h-24 overflow-y-auto space-y-0.5 pt-1 font-mono text-[11px]">
+                      {promoteModal.preview.studentsWithOverride.map((st: any) => (
+                        <div key={st.id} className="text-slate-700">
+                          {st.erpNo} - {st.name} (Sem {st.semesterOverride})
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-2 border-t border-slate-200 space-y-2">
+                  <label className="block text-xs font-bold text-slate-700">
+                    To confirm promotion, please type the batch label <span className="font-mono text-indigo-900">"{promoteModal.batchLabel}"</span> below:
+                  </label>
+                  <input
+                    type="text"
+                    value={typedConfirmLabel}
+                    onChange={(e) => setTypedConfirmLabel(e.target.value)}
+                    placeholder={promoteModal.batchLabel}
+                    className="w-full p-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-600 focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                  <button
+                    onClick={() => setPromoteModal(null)}
+                    disabled={executingPromote}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleExecuteHODPromote}
+                    disabled={typedConfirmLabel.trim() !== promoteModal.batchLabel.trim() || executingPromote}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {executingPromote ? "Promoting..." : "Confirm & Execute Promotion"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+
       {/* Faculty Assignment Picker Modal */}
       {assignModal?.open && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
@@ -646,6 +1077,24 @@ export default function HODDashboard() {
               </select>
             </div>
 
+            {assignModal.currentFacultyId && assignModal.currentFacultyId !== selectedFacultyId && (
+              <div className="space-y-1.5 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <label className="block text-xs font-semibold text-amber-800">
+                  Reason for Reassignment <span className="text-red-500">*</span>
+                </label>
+                <p className="text-[11px] text-amber-700">
+                  Reassigning this section will transfer open student queries to the new faculty, notify both faculty members, and record an audit log.
+                </p>
+                <textarea
+                  value={reassignReason}
+                  onChange={(e) => setReassignReason(e.target.value)}
+                  placeholder="Enter mandatory reason for faculty reassignment..."
+                  rows={2}
+                  className="w-full p-2 border border-amber-300 rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-medium"
+                />
+              </div>
+            )}
+
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
               <button
                 onClick={() => setAssignModal(null)}
@@ -660,6 +1109,19 @@ export default function HODDashboard() {
                 Save Assignment
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Section Analytics Modal */}
+      {analyticsSectionId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="max-w-2xl w-full my-8">
+            <SectionAnalyticsCard
+              sectionId={analyticsSectionId}
+              onClose={() => setAnalyticsSectionId(null)}
+              isCollapsible={false}
+            />
           </div>
         </div>
       )}
@@ -692,7 +1154,7 @@ export default function HODDashboard() {
               </div>
             )}
 
-            <div className={`grid grid-cols-3 gap-4 bg-indigo-50 p-4 rounded-lg border border-indigo-200 ${policyModal.isConfirmed ? "opacity-60 pointer-events-none" : ""}`}>
+            <div className={`grid grid-cols-2 sm:grid-cols-4 gap-4 bg-indigo-50 p-4 rounded-lg border border-indigo-200 ${policyModal.isConfirmed ? "opacity-60 pointer-events-none" : ""}`}>
               <div>
                 <label className="block text-xs font-bold text-indigo-900 uppercase mb-1">CES Weightage</label>
                 <input
@@ -736,6 +1198,20 @@ export default function HODDashboard() {
                   className={`w-full p-2 border rounded text-sm font-semibold focus:ring-2 focus:outline-none ${
                     attWeight < 0 || attWeight > 100 ? "border-rose-500 bg-rose-50 text-rose-900" : "border-slate-300 focus:ring-indigo-600"
                   }`}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-indigo-900 uppercase mb-1">Shortfall Warning (%)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  disabled={policyModal.isConfirmed}
+                  value={attShortfallThreshold}
+                  onChange={(e) => setAttShortfallThreshold(Number(e.target.value))}
+                  onWheel={(e) => (e.target as HTMLElement).blur()}
+                  placeholder="75"
+                  className="w-full p-2 border border-slate-300 rounded text-sm font-semibold focus:ring-2 focus:ring-indigo-600 focus:outline-none"
                 />
               </div>
             </div>

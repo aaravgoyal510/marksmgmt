@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { fetchApi } from "@/lib/api";
 import { ShieldCheck, Lock, UserCheck, AlertTriangle } from "lucide-react";
@@ -40,7 +41,7 @@ export default function LoginPage() {
       }
     } catch (err: any) {
       if (err.status === 423) {
-        setErrorMsg(err.data?.error || "Account locked after 10 failed attempts");
+        setErrorMsg(err.data?.error || "Account locked after 5 failed attempts");
         setLockoutOptions(err.data?.options || ["request-password-reset", "wait-24h"]);
       } else {
         setErrorMsg(err.data?.error || "Invalid username or password");
@@ -66,16 +67,23 @@ export default function LoginPage() {
         {errorMsg && (
           <div className="p-4 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-sm space-y-2">
             <div className="flex items-center gap-2 font-semibold">
-              <AlertTriangle className="w-4 h-4 text-rose-600" />
+              <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0" />
               <span>{errorMsg}</span>
             </div>
             {lockoutOptions && (
-              <div className="pt-2 text-xs text-rose-700">
-                <p className="font-semibold mb-1">Available Actions:</p>
-                <ul className="list-disc list-inside space-y-0.5">
-                  <li>Self-service password reset link via email</li>
-                  <li>Wait 24 hours for security cooldown period</li>
-                </ul>
+              <div className="pt-2 text-xs text-rose-900 space-y-2 border-t border-rose-200 mt-2">
+                <p className="font-bold">Account Security Options:</p>
+                <div className="space-y-1.5">
+                  <Link
+                    href={username ? `/forgot-password?username=${encodeURIComponent(username)}` : "/forgot-password"}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded text-xs transition-colors shadow-sm"
+                  >
+                    Option 1: Request Instant Password Reset Link →
+                  </Link>
+                  <p className="text-[11px] text-rose-700">
+                    <strong>Option 2:</strong> Wait 24 hours for the automatic security cooldown period to expire.
+                  </p>
+                </div>
               </div>
             )}
           </div>
@@ -100,9 +108,17 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">
-              Password
-            </label>
+            <div className="flex justify-between items-center mb-1">
+              <label className="block text-xs font-semibold uppercase text-slate-600">
+                Password
+              </label>
+              <Link
+                href={username ? `/forgot-password?username=${encodeURIComponent(username)}` : "/forgot-password"}
+                className="text-xs text-[#3730A3] hover:text-[#4338CA] font-semibold transition-colors"
+              >
+                Forgot password?
+              </Link>
+            </div>
             <div className="relative">
               <input
                 type="password"

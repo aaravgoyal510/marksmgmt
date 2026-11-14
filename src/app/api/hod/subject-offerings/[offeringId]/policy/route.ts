@@ -60,6 +60,7 @@ export async function POST(
       cesGroupWeightage,
       internalWeightage,
       attendanceWeightage,
+      attendanceShortfallPercent,
       scoreComponents,
       attendanceSlabRanges,
     } = body;
@@ -145,6 +146,8 @@ export async function POST(
           cesGroupWeightage,
           internalWeightage,
           attendanceWeightage,
+          attendanceShortfallPercent:
+            attendanceShortfallPercent !== undefined ? attendanceShortfallPercent : null,
           confirmedAt: null,
           confirmedByFacultyId: null,
         },
@@ -153,6 +156,8 @@ export async function POST(
           cesGroupWeightage,
           internalWeightage,
           attendanceWeightage,
+          attendanceShortfallPercent:
+            attendanceShortfallPercent !== undefined ? attendanceShortfallPercent : null,
           confirmedAt: null,
         },
       });

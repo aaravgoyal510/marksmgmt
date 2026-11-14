@@ -56,7 +56,11 @@ export async function GET(req: NextRequest) {
             faculty: true,
           },
         },
-        batches: true,
+        batches: {
+          include: {
+            sections: true,
+          },
+        },
       },
     });
 

@@ -16,8 +16,11 @@ export async function GET(req: NextRequest) {
       include: {
         user: {
           select: {
+            id: true,
             email: true,
             username: true,
+            isActive: true,
+            deactivatedAt: true,
           },
         },
         homeDepartment: true,
@@ -32,6 +35,9 @@ export async function GET(req: NextRequest) {
 
     const formatted = faculty.map((f) => ({
       id: f.id,
+      userId: f.userId,
+      isActive: f.user.isActive ?? true,
+      deactivatedAt: f.user.deactivatedAt ?? null,
       name: f.name,
       employeeId: f.employeeId,
       email: f.user.email,

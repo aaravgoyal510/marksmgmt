@@ -1,7 +1,7 @@
 # ImplementationPlan.md — Phased Timeline
 
 ## Phase 0: Discovery & Setup (Days 1–2)
-- Repo scaffold: `frontend/` (Next.js) + `backend/` (Express), shared `.env.example`.
+- Repo scaffold: Unified Next.js 14 App Router full-stack repository with TypeScript, Tailwind CSS, and Prisma ORM.
 - Supabase project + Prisma schema from Schema.md, first migration.
 - Seed script: 1 Admin, 2 Departments (different `totalSemesters`, e.g. BCA=6, MCA=4 — to stress-test the "no hardcoded 6" requirement immediately), 2 Batches, a handful of Faculty (one dual-role HOD), ~15 seed students per batch, 3–4 Subjects with different CES counts/max marks to prove the policy engine is genuinely configurable from day one.
 
@@ -48,13 +48,14 @@
 - Mobile responsiveness pass on attendance import and marks-check flows specifically.
 
 ## Phase 9: Deployment (Days 29–30)
-- Backend → Render, frontend → Vercel, `Asia/Kolkata` timezone confirmed across term dates and audit timestamps.
+- Unified Next.js full-stack app deployed to Vercel/Node runtime, `Asia/Kolkata` timezone confirmed across term dates and audit timestamps.
+- Edge security middleware and DB-backed lockout active.
 - Sentry wired in production.
 - Final smoke test across all four roles on production URLs.
 
-## Deferred to a Later Update
-- **Student bulk import via CSV** — format not yet finalized (waiting on the real file). Everything else (Faculty onboarding, credential export, attendance import) ships without it; students can be added manually via a single-entry Admin form in the meantime if needed for early testing.
-- SMS-based password reset (no viable free Indian provider).
+## Note on Previously Deferred Items
+- **Student bulk import via CSV** — Completed in Phase 4: dry-run preview and atomic commit endpoints (`POST /api/admin/students/import/preview` and `.../commit`), standard CSV format (`ERP No, PRN, Name, Email, Section`), and credentials Excel export.
+- SMS-based password reset (deferred: no viable free Indian provider).
 - Snapshot history for attendance (currently overwrite-only, by design).
 
 ## Standing Rules (carried over from your other projects)

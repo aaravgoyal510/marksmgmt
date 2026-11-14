@@ -54,6 +54,8 @@ export async function GET(req: NextRequest) {
         id: sos.id,
         sectionId: sos.sectionId,
         sectionName: sos.section.name,
+        subjectOfferingId: sos.subjectOfferingId,
+        academicTermId: sos.subjectOffering.academicTermId,
         batchLabel,
         departmentName: deptName,
         subjectId: sos.subjectOffering.subjectId,
@@ -62,6 +64,8 @@ export async function GET(req: NextRequest) {
         termLabel: sos.subjectOffering.academicTerm.label,
         isPolicyConfirmed,
         isLocked,
+        isPublished: Boolean(sos.marksPublishedAt),
+        marksPublishedAt: sos.marksPublishedAt,
         label: `${sos.subjectOffering.subject.code} - ${sos.subjectOffering.subject.name} (${sos.section.name} - Batch ${batchLabel})`,
       };
     });

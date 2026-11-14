@@ -81,6 +81,16 @@ Per Subject Offering, HOD configures:
 - Student performance chart: simple bar breakdown of CES/Internal/Attendance per subject.
 - "Duplicate last term's policy" one-click action for HOD.
 
+### 5.8 Rollout & Production Readiness (v1.1)
+- **Controlled Marks Release**: Marks are published to students explicitly by teaching faculty (`POST /api/sections/[id]/marks/publish`). Unpublished sections display "Not yet published" and omit marks from student semester views and PDFs.
+- **Bulk Marks Upload**: Faculty can upload component marks via CSV or Excel (.xlsx) with header normalization (`normalizeComponentHeader`), preview row validation (`READY`, `UNMATCHED`, `OUT_OF_BOUNDS`, `BLANK`), and transactional commit under audit logging.
+- **Batch Promotion Dry-Run**: Administrators and HODs preview target semester, offerings created, and student overrides prior to committing promotions.
+- **Account Lifecycle & Security**: Admin soft-deactivation (`isActive: false`), global session revocation (`POST /api/auth/logout-everywhere` with `tokenVersion`), and strict 15-minute access token lifespan.
+- **Automated Grievance SLA**: Nightly cron (`/api/cron/query-sla`) reminds faculty at 48 hours and auto-escalates to HOD at 96 hours.
+- **Department & Section Analytics**: Recharts and Tailwind visual distributions (averages, median, standard deviation, grade bands, and attendance shortfall detection) for faculty and HODs.
+- **Consolidated Student Transcript**: Staff can export multi-term transcripts (`/api/students/[id]/transcript/pdf`) consolidating all published offerings.
+- **Interactive Role Help**: Accessible `/help` center with walkthroughs and exact grade formula verification.
+
 ## 6. Out of Scope (MVP)
 - External/semester exam marks.
 - Multi-institute support (single-institute by design, permanently).

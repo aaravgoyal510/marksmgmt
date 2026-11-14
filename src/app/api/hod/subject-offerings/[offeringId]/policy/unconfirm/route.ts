@@ -25,7 +25,14 @@ export async function POST(
           },
         },
         sections: {
-          select: { id: true },
+          select: {
+            id: true,
+            faculty: {
+              select: {
+                userId: true,
+              },
+            },
+          },
         },
       },
     });
@@ -95,6 +102,30 @@ export async function POST(
         newValue: "UNCONFIRMED",
       },
     });
+
+    // Notify assigned faculty members that policy was unlocked
+    try {
+      const facultyUserIds = Array.from(
+        new Set(
+          offering.sections
+            .map((s: any) => s.faculty?.userId)
+            .filter(Boolean) as string[]
+        )
+      );
+
+      if (facultyUserIds.length > 0) {
+        await prisma.notification.createMany({
+          data: facultyUserIds.map((uId) => ({
+            userId: uId,
+            type: "OFFERING_UNLOCKED",
+            message: `Grading policy unlocked for ${offering.subject.name} (${offering.subject.code}) by HOD. Marks entry is temporarily locked.`,
+            link: "/faculty",
+          })),
+        });
+      }
+    } catch (notifErr) {
+      console.error("Failed to notify faculty of unconfirmed policy:", notifErr);
+    }
 
     return NextResponse.json(
       {

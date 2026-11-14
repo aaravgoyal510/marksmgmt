@@ -44,35 +44,28 @@ export async function POST(
     );
   }
 
-  // IDOR Protection: Students can only resolve their own queries
-  if (auth.user.role === Role.STUDENT && query.student.userId !== userId) {
+  // Authorization rule: assigned teaching faculty only
+  if (auth.user.role !== Role.FACULTY) {
     return NextResponse.json(
-      {
-        error: "Forbidden: You are not authorized to resolve another student's query",
-        code: "IDOR_FORBIDDEN",
-      },
+      { error: "Forbidden: Only assigned teaching faculty may resolve this query" },
       { status: 403 }
     );
   }
 
-  // Authorization check for faculty: must be assigned faculty or HOD
-  if (auth.user.role === Role.FACULTY) {
-    const faculty = await prisma.facultyProfile.findUnique({
-      where: { userId },
-      include: { hodAssignments: true },
-    });
+  const callerFacultyId = auth.user.facultyId;
+  const assignedSectionFacultyId = query.subjectOfferingSection.facultyId;
+  const isAssignedFaculty =
+    callerFacultyId &&
+    (callerFacultyId === query.facultyId || callerFacultyId === assignedSectionFacultyId);
 
-    const isAssignedFaculty = query.facultyId === faculty?.id;
-    const isAssignedHOD = query.hodId === faculty?.id;
-    const deptId = query.subjectOfferingSection.subjectOffering.subject.departmentId;
-    const isDeptHOD = faculty?.hodAssignments.some((h) => h.departmentId === deptId);
-
-    if (!isAssignedFaculty && !isAssignedHOD && !isDeptHOD) {
-      return NextResponse.json(
-        { error: "Forbidden: You are not authorized to resolve this query" },
-        { status: 403 }
-      );
-    }
+  if (!isAssignedFaculty) {
+    return NextResponse.json(
+      {
+        error: "Forbidden: Only the assigned teaching faculty for this section may resolve this query",
+        code: "TEACHING_FACULTY_ONLY",
+      },
+      { status: 403 }
+    );
   }
 
   const cleanRemarks =
